@@ -48,6 +48,11 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
     private val btnBrowseRemote = JButton("📁 Browse Remote...")
     private val btnResetRemoteTemplate = JButton("⟳")
 
+    private val excludePatternsField = JBTextField()
+    private val btnResetExcludes = JButton("⟳ Default")
+    private val rsyncPathField = TextFieldWithBrowseButton()
+    private val btnAutoDetectRsync = JButton("🔍 Auto-Detect")
+
     private val runCommandField = JBTextField()
     private val debugCommandField = JBTextField()
 
@@ -96,34 +101,96 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
             FileChooserDescriptorFactory.createSingleFileDescriptor()
         )
 
-        btnResetRemoteTemplate.toolTipText = "Shablon bo'yicha qayta tiklash (/<user>/remote-flow/<project>)"
+        btnResetRemoteTemplate.toolTipText = "Shablon bo'yicha qayta tiklash (/<user>/remote-flow/<local-folder>)"
         btnResetRemoteTemplate.addActionListener {
             val u = userField.text.trim().ifBlank { "root" }
-            val p = project.name.trim().ifBlank { "app" }
-            remotePathField.text = if (u == "root") "/root/remote-flow/$p" else "/home/$u/remote-flow/$p"
+            val fName = resolveLocalFolderName()
+            remotePathField.text = if (u == "root") "/root/remote-flow/$fName" else "/home/$u/remote-flow/$fName"
         }
+
+        btnResetExcludes.toolTipText = "Default istisnolar ro'yxatini tiklash"
+        btnResetExcludes.addActionListener {
+            excludePatternsField.text = uz.remote.flow.ssh.defaultExcludes()
+        }
+
+        rsyncPathField.addBrowseFolderListener(
+            "Select Rsync Executable",
+            "Choose rsync or rsync.exe",
+            project,
+            FileChooserDescriptorFactory.createSingleFileDescriptor()
+        )
+
+        btnAutoDetectRsync.toolTipText = "Tizimdan rsync.exe ni avtomatik aniqlash"
+        btnAutoDetectRsync.addActionListener {
+            val detected = uz.remote.flow.ssh.detectRsyncPath()
+            if (detected.isNotBlank()) {
+                rsyncPathField.text = detected
+                Messages.showInfoMessage(project, "Rsync topildi:\n$detected", "Rsync Aniqlash")
+            } else {
+                Messages.showWarningDialog(project, "Tizimdan rsync topilmadi. Rsync o'rnatilgan yo'lini 'Browse...' orqali tanlashingiz mumkin yoki SFTP avtomatik ishlatiladi.", "Rsync Topilmadi")
+            }
+        }
+
+        localFolderField.textField.document.addDocumentListener(object : javax.swing.event.DocumentListener {
+            private fun syncRemote() {
+                val fName = resolveLocalFolderName()
+                val u = userField.text.trim().ifBlank { "root" }
+                val curRemote = remotePathField.text.trim()
+                if (curRemote.isBlank() || curRemote.matches(Regex(".*/remote-flow(/.*)?$"))) {
+                    remotePathField.text = if (u == "root") "/root/remote-flow/$fName" else "/home/$u/remote-flow/$fName"
+                }
+            }
+            override fun insertUpdate(e: javax.swing.event.DocumentEvent?) { syncRemote() }
+            override fun removeUpdate(e: javax.swing.event.DocumentEvent?) { syncRemote() }
+            override fun changedUpdate(e: javax.swing.event.DocumentEvent?) { syncRemote() }
+        })
 
         btnBrowseRemote.addActionListener {
             saveCurrentSelection()
             val current = getCurrentProfile() ?: return@addActionListener
-            if (!connectionManager.isConnected) {
-                Messages.showInfoMessage(project, "Masofaviy papkalarni ko'rish uchun avval serverga ulanish lozim.", "Eslatma")
-                return@addActionListener
-            }
-            val dialog = RemoteDirectoryChooserDialog(project, remotePathField.text.trim(), current)
-            if (dialog.showAndGet()) {
-                remotePathField.text = dialog.selectedPath
-                current.remoteProjectPath = dialog.selectedPath
+            val targetRemote = remotePathField.text.trim().ifBlank { "/root" }
+
+            connectionManager.checkDirectoryExists(current, targetRemote) { exists, _ ->
+                ApplicationManager.getApplication().invokeLater {
+                    if (exists) {
+                        val dialog = RemoteDirectoryChooserDialog(project, targetRemote, current)
+                        if (dialog.showAndGet()) {
+                            remotePathField.text = dialog.selectedPath
+                            current.remoteProjectPath = dialog.selectedPath
+                        }
+                    } else {
+                        promptCreateRemoteDir(current, targetRemote) { created ->
+                            val openPath = if (created) targetRemote else "/root"
+                            val dialog = RemoteDirectoryChooserDialog(project, openPath, current)
+                            if (dialog.showAndGet()) {
+                                remotePathField.text = dialog.selectedPath
+                                current.remoteProjectPath = dialog.selectedPath
+                            }
+                        }
+                    }
+                }
             }
         }
 
         btnTestConnection.addActionListener {
             saveCurrentSelection()
             val current = getCurrentProfile() ?: return@addActionListener
-            connectionManager.testConnection(current) { ok, msg ->
+            val targetRemote = remotePathField.text.trim()
+
+            connectionManager.testConnection(current, checkRemoteDir = targetRemote) { ok, dirExists, msg ->
                 ApplicationManager.getApplication().invokeLater {
-                    if (ok) Messages.showInfoMessage(project, msg, "Ulanish Muvaffaqiyatli")
-                    else Messages.showErrorDialog(project, msg, "Ulanishda Xatolik")
+                    if (!ok) {
+                        Messages.showErrorDialog(project, msg, "Ulanishda Xatolik")
+                        return@invokeLater
+                    }
+
+                    if (targetRemote.isNotBlank() && !dirExists) {
+                        promptCreateRemoteDir(current, targetRemote)
+                    } else if (targetRemote.isNotBlank()) {
+                        Messages.showInfoMessage(project, "$msg\n\nMasofaviy papka mavjud: $targetRemote", "Ulanish Muvaffaqiyatli")
+                    } else {
+                        Messages.showInfoMessage(project, msg, "Ulanish Muvaffaqiyatli")
+                    }
                 }
             }
         }
@@ -145,35 +212,38 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
             .setAddAction {
                 saveCurrentSelection()
                 val newName = "Server " + (workingProfiles.size + 1)
+                val fName = resolveLocalFolderName()
+                val localPath = localFolderField.text.trim().ifBlank { project.basePath ?: "" }
                 val newP = ServerProfile(
                     name = newName,
                     host = "192.168.1.100",
-                    localProjectPath = project.basePath ?: "",
-                    remoteProjectPath = "/root/remote-flow/" + project.name
+                    localProjectPath = localPath,
+                    remoteProjectPath = "/root/remote-flow/$fName"
                 )
                 workingProfiles.add(newP)
                 profileListModel.addElement(newP)
                 profileList.selectedIndex = workingProfiles.size - 1
             }
             .setRemoveAction {
-                if (workingProfiles.size <= 1) {
-                    Messages.showWarningDialog(project, "Oxirgi server profilini o'chirib bo'lmaydi!", "Ogohlantirish")
-                    return@setRemoveAction
-                }
                 val curIdx = profileList.selectedIndex
-                if (curIdx >= 0) {
+                if (curIdx >= 0 && curIdx < workingProfiles.size) {
                     workingProfiles.removeAt(curIdx)
                     profileListModel.remove(curIdx)
-                    selectedIndex = curIdx.coerceAtMost(workingProfiles.size - 1)
-                    profileList.selectedIndex = selectedIndex
-                    loadProfileToForm(workingProfiles[selectedIndex])
+                    if (workingProfiles.isNotEmpty()) {
+                        selectedIndex = curIdx.coerceAtMost(workingProfiles.size - 1)
+                        profileList.selectedIndex = selectedIndex
+                        loadProfileToForm(workingProfiles[selectedIndex])
+                    } else {
+                        selectedIndex = 0
+                        clearForm()
+                    }
                 }
             }
             .addExtraAction(object : com.intellij.openapi.actionSystem.AnAction("Duplicate Profile", "Nusxa olish", com.intellij.icons.AllIcons.Actions.Copy) {
                 override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent) {
                     saveCurrentSelection()
                     val cur = getCurrentProfile() ?: return
-                    val copy = cur.copyProfile()
+                    val copy = cur.duplicateProfile()
                     workingProfiles.add(copy)
                     profileListModel.addElement(copy)
                     profileList.selectedIndex = workingProfiles.size - 1
@@ -197,9 +267,62 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         if (workingProfiles.isNotEmpty()) {
             profileList.selectedIndex = selectedIndex.coerceIn(workingProfiles.indices)
             loadProfileToForm(workingProfiles[profileList.selectedIndex])
+        } else {
+            clearForm()
         }
 
         return root
+    }
+
+    private fun clearForm() {
+        nameField.text = ""
+        hostField.text = ""
+        portField.text = "22"
+        authTypeBox.selectedIndex = 0
+        userField.text = "root"
+        passwordField.text = ""
+        keyPathField.text = ""
+        localFolderField.text = project.basePath ?: ""
+        remotePathField.text = ""
+        excludePatternsField.text = uz.remote.flow.ssh.defaultExcludes()
+        rsyncPathField.text = ""
+        runCommandField.text = ""
+        debugCommandField.text = ""
+        if (::portsTableModel.isInitialized) {
+            portsTableModel.rowCount = 0
+        }
+    }
+
+    private fun resolveLocalFolderName(): String {
+        val path = localFolderField.text.trim().replace('\\', '/').trimEnd('/')
+        val folder = path.substringAfterLast('/')
+        return folder.ifBlank { project.name.trim().ifBlank { "app" } }
+    }
+
+    private fun promptCreateRemoteDir(profile: ServerProfile, remotePath: String, onFinished: ((Boolean) -> Unit)? = null) {
+        val choice = Messages.showYesNoDialog(
+            project,
+            "Serverda masofaviy papka topilmadi:\n$remotePath\n\nUshbu papkani serverda hozir yaratishni xohlaysizmi?",
+            "Masofaviy Papka Topilmadi",
+            "Ha, Yaratish",
+            "Yo'q",
+            Messages.getQuestionIcon()
+        )
+        if (choice == Messages.YES) {
+            connectionManager.createDirectory(profile, remotePath) { success, err ->
+                ApplicationManager.getApplication().invokeLater {
+                    if (success) {
+                        Messages.showInfoMessage(project, "Masofaviy papka serverda muvaffaqiyatli yaratildi:\n$remotePath", "Papka Yaratildi")
+                        onFinished?.invoke(true)
+                    } else {
+                        Messages.showErrorDialog(project, "Papkani yaratishda xatolik yuz berdi: " + (err ?: "Ruxsat yo'q"), "Xatolik")
+                        onFinished?.invoke(false)
+                    }
+                }
+            }
+        } else {
+            onFinished?.invoke(false)
+        }
     }
 
     private fun createDetailPanel(): JPanel {
@@ -254,20 +377,38 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(remotePanel, gbc)
         gbc.gridwidth = 1
 
-        // Row 7: Commands
-        gbc.gridx = 0; gbc.gridy = 7; gbc.weightx = 0.0; form.add(JBLabel("Run Command:"), gbc)
+        // Row 7: Exclude Paths
+        gbc.gridx = 0; gbc.gridy = 7; gbc.weightx = 0.0; form.add(JBLabel("Exclude Paths:"), gbc)
+        val excludePanel = JPanel(BorderLayout(4, 0))
+        excludePatternsField.toolTipText = "Masalan: .git, .gradle, build, .idea, out, target, node_modules, *.log"
+        excludePanel.add(excludePatternsField, BorderLayout.CENTER)
+        excludePanel.add(btnResetExcludes, BorderLayout.EAST)
+        gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(excludePanel, gbc)
+        gbc.gridwidth = 1
+
+        // Row 8: Rsync Executable
+        gbc.gridx = 0; gbc.gridy = 8; gbc.weightx = 0.0; form.add(JBLabel("Rsync Executable:"), gbc)
+        val rsyncPanel = JPanel(BorderLayout(4, 0))
+        rsyncPathField.textField.toolTipText = "Bo'sh qoldirilsa tizimdan avtomatik qidiriladi yoki SFTP zaxira ishlatiladi"
+        rsyncPanel.add(rsyncPathField, BorderLayout.CENTER)
+        rsyncPanel.add(btnAutoDetectRsync, BorderLayout.EAST)
+        gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(rsyncPanel, gbc)
+        gbc.gridwidth = 1
+
+        // Row 9: Commands
+        gbc.gridx = 0; gbc.gridy = 9; gbc.weightx = 0.0; form.add(JBLabel("Run Command:"), gbc)
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(runCommandField, gbc)
         gbc.gridwidth = 1
 
-        gbc.gridx = 0; gbc.gridy = 8; gbc.weightx = 0.0; form.add(JBLabel("Debug Command:"), gbc)
+        gbc.gridx = 0; gbc.gridy = 10; gbc.weightx = 0.0; form.add(JBLabel("Debug Command:"), gbc)
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(debugCommandField, gbc)
         gbc.gridwidth = 1
 
-        // Row 9: Buttons
+        // Row 11: Buttons
         val btnRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
         btnRow.add(btnTestConnection)
         btnRow.add(autoReconnectCheck)
-        gbc.gridx = 0; gbc.gridy = 9; gbc.gridwidth = 4; gbc.weightx = 1.0
+        gbc.gridx = 0; gbc.gridy = 11; gbc.gridwidth = 4; gbc.weightx = 1.0
         form.add(btnRow, gbc)
 
         // Ports Table
@@ -325,8 +466,21 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         userField.text = p.user
         passwordField.text = p.password
         keyPathField.text = p.privateKeyPath
-        localFolderField.text = p.localProjectPath.ifBlank { project.basePath ?: "" }
-        remotePathField.text = p.remoteProjectPath
+        val localPath = p.localProjectPath.ifBlank { project.basePath ?: "" }
+        localFolderField.text = localPath
+        val fName = localPath.replace('\\', '/').trimEnd('/').substringAfterLast('/').ifBlank { project.name.trim().ifBlank { "app" } }
+        val u = p.user.ifBlank { "root" }
+        val defaultRemote = if (u == "root") "/root/remote-flow/$fName" else "/home/$u/remote-flow/$fName"
+
+        if (p.remoteProjectPath.isBlank() ||
+            (p.remoteProjectPath.matches(Regex(".*/remote-flow/.*")) && !p.remoteProjectPath.endsWith("/$fName"))
+        ) {
+            remotePathField.text = defaultRemote
+        } else {
+            remotePathField.text = p.remoteProjectPath
+        }
+        excludePatternsField.text = p.excludePatterns.ifBlank { uz.remote.flow.ssh.defaultExcludes() }
+        rsyncPathField.text = p.rsyncPath
         runCommandField.text = p.runCommand
         debugCommandField.text = p.debugCommand
         autoReconnectCheck.isSelected = settings.autoReconnect
@@ -351,6 +505,8 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         p.privateKeyPath = keyPathField.text.trim()
         p.localProjectPath = localFolderField.text.trim()
         p.remoteProjectPath = remotePathField.text.trim()
+        p.excludePatterns = excludePatternsField.text.trim().ifBlank { uz.remote.flow.ssh.defaultExcludes() }
+        p.rsyncPath = rsyncPathField.text.trim()
         p.runCommand = runCommandField.text.trim()
         p.debugCommand = debugCommandField.text.trim()
 
@@ -369,9 +525,13 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
     private fun resetWorkingCopy() {
         workingProfiles.clear()
         for (p in settings.profiles) {
-            workingProfiles.add(p.copyProfile())
+            val copy = p.copyProfile()
+            copy.name = uz.remote.flow.ssh.cleanServerName(copy.name)
+            workingProfiles.add(copy)
         }
-        selectedIndex = settings.activeProfileIndex.coerceIn(workingProfiles.indices)
+        selectedIndex = if (workingProfiles.isNotEmpty()) {
+            settings.activeProfileIndex.coerceIn(workingProfiles.indices)
+        } else 0
 
         profileListModel.clear()
         for (p in workingProfiles) {
@@ -380,17 +540,21 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
     }
 
     override fun isModified(): Boolean {
-        saveCurrentSelection()
+        if (workingProfiles.isNotEmpty()) {
+            saveCurrentSelection()
+        }
         if (settings.autoReconnect != autoReconnectCheck.isSelected) return true
-        if (settings.activeProfileIndex != selectedIndex) return true
         if (settings.profiles.size != workingProfiles.size) return true
+        if (settings.profiles.isNotEmpty() && settings.activeProfileIndex != selectedIndex) return true
         for (i in workingProfiles.indices) {
             val a = workingProfiles[i]
             val b = settings.profiles[i]
             if (a.name != b.name || a.host != b.host || a.port != b.port ||
                 a.user != b.user || a.password != b.password || a.privateKeyPath != b.privateKeyPath ||
+                a.localProjectPath != b.localProjectPath ||
                 a.remoteProjectPath != b.remoteProjectPath || a.runCommand != b.runCommand ||
                 a.debugCommand != b.debugCommand || a.authType != b.authType ||
+                a.excludePatterns != b.excludePatterns || a.rsyncPath != b.rsyncPath ||
                 a.forwardedPorts.size != b.forwardedPorts.size
             ) {
                 return true
@@ -400,12 +564,32 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
     }
 
     override fun apply() {
-        saveCurrentSelection()
-        settings.profiles = workingProfiles.map { it.copyProfile() }.toMutableList()
-        settings.activeProfileIndex = selectedIndex.coerceIn(settings.profiles.indices)
+        if (workingProfiles.isNotEmpty()) {
+            saveCurrentSelection()
+        }
+        settings.profiles = workingProfiles.map {
+            it.name = uz.remote.flow.ssh.cleanServerName(it.name)
+            it.copyProfile()
+        }.toMutableList()
+        settings.activeProfileIndex = if (settings.profiles.isNotEmpty()) {
+            selectedIndex.coerceIn(settings.profiles.indices)
+        } else 0
         settings.autoReconnect = autoReconnectCheck.isSelected
 
-        project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).profileChanged(settings.activeProfile)
+        val activeP = settings.activeProfileOrNull
+        if (activeP != null && activeP.remoteProjectPath.isNotBlank() && connectionManager.isConnected) {
+            connectionManager.checkDirectoryExists(activeP, activeP.remoteProjectPath) { exists, _ ->
+                if (!exists) {
+                    ApplicationManager.getApplication().invokeLater {
+                        promptCreateRemoteDir(activeP, activeP.remoteProjectPath)
+                    }
+                }
+            }
+        }
+
+        if (activeP != null) {
+            project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).profileChanged(activeP)
+        }
     }
 
     override fun reset() {
@@ -413,6 +597,8 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         if (workingProfiles.isNotEmpty()) {
             profileList.selectedIndex = selectedIndex
             loadProfileToForm(workingProfiles[selectedIndex])
+        } else {
+            clearForm()
         }
     }
 }

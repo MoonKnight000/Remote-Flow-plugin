@@ -25,7 +25,18 @@
                     secondary="true"
                     anchor="right"
                     factoryClass="uz.remote.flow.ui.RemoteFlowToolWindowFactory"/>
+
+        <toolWindow id="Remote Flow Log"
+                    icon="icons/remoteFlow.svg"
+                    secondary="true"
+                    anchor="bottom"
+                    factoryClass="uz.remote.flow.ui.RemoteFlowLogToolWindowFactory"/>
     </extensions>
+
+    <projectListeners>
+        <listener class="uz.remote.flow.sync.RemoteFlowAutoSyncService"
+                  topic="com.intellij.openapi.fileEditor.FileDocumentManagerListener"/>
+    </projectListeners>
 
     <actions>
         <!-- Group in Tools Menu -->
@@ -51,6 +62,18 @@
                     class="uz.remote.flow.actions.RemoteFlowTerminalAction"
                     text="Open Remote SSH Terminal"
                     description="Open interactive terminal session with active server"/>
+            <action id="RemoteFlow.BrowseFilesAction"
+                    class="uz.remote.flow.actions.RemoteFlowBrowseFilesAction"
+                    text="Browse Remote Files..."
+                    description="View remote server directory files and folders"/>
+            <action id="RemoteFlow.ConfigAction"
+                    class="uz.remote.flow.actions.RemoteFlowConfigAction"
+                    text="Remote Configs (.env / .yml)..."
+                    description="Edit remote .env and yaml configurations"/>
+            <action id="RemoteFlow.OpenLogAction"
+                    class="uz.remote.flow.actions.RemoteFlowOpenLogAction"
+                    text="Show Remote Flow Logs"
+                    description="Open Remote Flow log console in bottom tool window"/>
             <separator/>
             <action id="RemoteFlow.DockerUpAction"
                     class="uz.remote.flow.actions.RemoteFlowDockerUpAction"
@@ -70,6 +93,10 @@
         <!-- Context menu in Project View -->
         <group id="RemoteFlow.ProjectViewGroup" text="Remote Flow" popup="true" icon="icons/remoteFlow.svg">
             <add-to-group group-id="ProjectViewPopupMenu" anchor="after" relative-to-action="CutCopyPasteGroup"/>
+            <action id="RemoteFlow.ProjectViewBrowseFilesAction"
+                    class="uz.remote.flow.actions.RemoteFlowBrowseFilesAction"
+                    text="Browse Remote Files"
+                    description="Explore remote server directory files and folders"/>
             <action id="RemoteFlow.SyncSelectionAction"
                     class="uz.remote.flow.actions.RemoteFlowSyncSelectionAction"
                     text="Sync Selected to Remote"

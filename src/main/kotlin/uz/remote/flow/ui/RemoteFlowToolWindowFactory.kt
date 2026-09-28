@@ -4,6 +4,7 @@ import com.intellij.execution.filters.TextConsoleBuilderFactory
 import com.intellij.execution.ui.ConsoleView
 import com.intellij.execution.ui.ConsoleViewContentType
 import com.intellij.notification.NotificationType
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
@@ -12,12 +13,14 @@ import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.IdeBorderFactory
 import com.intellij.ui.JBColor
+import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.table.JBTable
+import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.ui.JBUI
 import uz.remote.flow.docker.DockerComposeManager
 import uz.remote.flow.settings.RemoteFlowConfigurable
@@ -33,6 +36,8 @@ import java.awt.*
 import java.awt.datatransfer.StringSelection
 import java.net.HttpURLConnection
 import java.net.URI
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import javax.swing.*
 import javax.swing.table.DefaultTableModel
 
@@ -41,11 +46,12 @@ class RemoteFlowToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val panel = RemoteFlowMainPanel(project)
         val content = ContentFactory.getInstance().createContent(panel, "", false)
+        content.setDisposer(panel)
         toolWindow.contentManager.addContent(content)
     }
 }
 
-class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0, 4)) {
+class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0, 4)), Disposable {
 
     private val settings = RemoteFlowSettings.getInstance(project)
     private val connectionManager = RemoteConnectionManager.getInstance(project)
@@ -53,7 +59,6 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     private val syncManager = FastSyncManager(project)
     private val statsManager = ServerStatsManager(project)
 
-    private val consoleView: ConsoleView = TextConsoleBuilderFactory.getInstance().createBuilder(project).console
     private val terminalConsoleView: ConsoleView = TextConsoleBuilderFactory.getInstance().createBuilder(project).console
 
     // Header Controls
@@ -64,9 +69,23 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     private val statusDot = JLabel("● ")
     private val statusText = JLabel("Disconnected")
     private val btnSyncHeader = JButton("🔄 Sync")
+    private val btnFilesHeader = JButton("📁 Files")
+    private val btnTerminalHeader = JButton("💻 Terminal")
     private val btnPingApi = JButton("🩺 Ping API")
     private val apiHealthLabel = JLabel("API: --")
+    private val chkAutoSyncHeader = JBCheckBox("⚡ Auto-Sync")
+    private val btnConfigsHeader = JButton("⚙ Configs")
     private val btnSettings = JButton("⚙ Settings")
+
+    // Remote Git Status Labels
+    private val lblGitBranch = JLabel("🌿 Branch: -")
+    private val lblGitCommit = JLabel("📌 Commit: -")
+    private val lblGitStatus = JLabel("Status: -")
+
+    // Remote Files Explorer Panel & Unified Logger
+    val filesPanel = RemoteFileExplorerPanel(project)
+    private val tabbedPane = JBTabbedPane()
+    private val logService = uz.remote.flow.logging.RemoteFlowLogService.getInstance(project)
 
     // Run / Debug tab controls
     private val runCommandField = JBTextField()
@@ -83,6 +102,14 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     private val diskBar = JProgressBar(0, 100)
     private val diskLabel = JLabel("0 GB / 0 GB (0%)")
     private val dockerStatsArea = JTextArea("Resurs ma'lumotlarini olish uchun 'Refresh' tugmasini bosing.")
+
+    // Hardware Resource Monitor Controls
+    private val monitorModeBox = JComboBox(arrayOf("⚡ Real-time (3s)", "⏱ Real-time (5s)", "🔍 Manual (On demand)", "🚫 Off (Disabled)"))
+    private val monitorStatusLabel = JLabel("● Active")
+    private val btnRefreshStats = JButton("⟳ Refresh")
+    private var monitorScheduledTask: ScheduledFuture<*>? = null
+    private val monitorExecutor = AppExecutorUtil.getAppScheduledExecutorService()
+    private var isUpdatingMonitorUi = false
 
     // Overview info labels
     private val lblServerHost = JLabel("-")
@@ -101,9 +128,9 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         // Setup Header Control Bar
         add(createHeaderPanel(), BorderLayout.NORTH)
 
-        // 5 Logical Tabs
-        val tabbedPane = JBTabbedPane()
+        // 6 Logical Tabs
         tabbedPane.addTab("📊 Dashboard", createDashboardTab())
+        tabbedPane.addTab("📁 Files", filesPanel)
         tabbedPane.addTab("🚀 Run & Debug", createRunDebugTab())
         tabbedPane.addTab("🐳 Docker", createDockerTab())
         tabbedPane.addTab("🔌 Ports & Database", createPortsAndDbTab())
@@ -128,9 +155,39 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
             }
         })
 
+        monitorModeBox.addActionListener {
+            if (isUpdatingMonitorUi) return@addActionListener
+            val selected = monitorModeBox.selectedIndex
+            val p = settings.activeProfileOrNull
+            val modeStr = when (selected) {
+                0 -> "REALTIME_3S"
+                1 -> "REALTIME_5S"
+                2 -> "MANUAL"
+                else -> "OFF"
+            }
+            if (p != null) {
+                p.monitorMode = modeStr
+            }
+            restartMonitorScheduler()
+        }
+
         refreshProfileComboBox()
         loadProfileData(settings.activeProfile)
         updateConnectionStateUi(connectionManager.isConnected)
+    }
+
+    override fun dispose() {
+        stopMonitorScheduler()
+        filesPanel.dispose()
+    }
+
+    fun selectTab(titlePrefix: String) {
+        for (i in 0 until tabbedPane.tabCount) {
+            if (tabbedPane.getTitleAt(i).contains(titlePrefix, ignoreCase = true)) {
+                tabbedPane.selectedIndex = i
+                break
+            }
+        }
     }
 
     private fun createHeaderPanel(): JPanel {
@@ -168,7 +225,11 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
         btnEditServer.toolTipText = "Faol server parametrlarini tahrirlash"
         btnEditServer.addActionListener {
-            val current = settings.activeProfile
+            val current = settings.activeProfileOrNull
+            if (current == null) {
+                ShowSettingsUtil.getInstance().showSettingsDialog(project, RemoteFlowConfigurable::class.java)
+                return@addActionListener
+            }
             val dialog = ServerProfileEditDialog(project, current, isNew = false)
             if (dialog.showAndGet()) {
                 refreshProfileComboBox()
@@ -192,15 +253,47 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         statusText.font = statusText.font.deriveFont(Font.BOLD, 11f)
         left.add(statusText)
 
+        chkAutoSyncHeader.toolTipText = "Fayl saqlanganda (Ctrl+S) avtomatik ravishda serverga sinxronizatsiya qilish"
+        chkAutoSyncHeader.addActionListener {
+            val p = settings.activeProfileOrNull ?: return@addActionListener
+            p.autoSyncOnSave = chkAutoSyncHeader.isSelected
+        }
+        left.add(chkAutoSyncHeader)
+
         val right = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 2))
 
         btnSyncHeader.toolTipText = "Kodni tezkor faol serverga yuklash"
         btnSyncHeader.addActionListener { syncFiles() }
         right.add(btnSyncHeader)
 
+        btnFilesHeader.toolTipText = "Serverdagi loyiha papkasi va fayllarni ko'rish"
+        btnFilesHeader.addActionListener {
+            selectTab("Files")
+            filesPanel.loadDirectory(settings.activeProfile.remoteProjectPath)
+        }
+        right.add(btnFilesHeader)
+
+        btnConfigsHeader.toolTipText = "Masofaviy .env va application.yml sozlamalarini boshqarish"
+        btnConfigsHeader.addActionListener { openRemoteConfigManager() }
+        right.add(btnConfigsHeader)
+
+        btnTerminalHeader.toolTipText = "IntelliJ IDEA Terminalida serverga SSH orqali ulanish"
+        btnTerminalHeader.addActionListener {
+            val p = settings.activeProfileOrNull ?: return@addActionListener
+            uz.remote.flow.terminal.RemoteTerminalHelper.openTerminal(project, p)
+        }
+        right.add(btnTerminalHeader)
+
         btnPingApi.addActionListener { pingApiHealth() }
         right.add(btnPingApi)
         right.add(apiHealthLabel)
+
+        val btnLogsHeader = JButton("📜 Logs")
+        btnLogsHeader.toolTipText = "Pastki paneldagi Remote Flow barcha loglar oynasini ochish"
+        btnLogsHeader.addActionListener {
+            com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("Remote Flow Log")?.show(null)
+        }
+        right.add(btnLogsHeader)
 
         btnSettings.toolTipText = "Barcha serverlar va sozlamalarni ochish"
         btnSettings.addActionListener {
@@ -218,22 +311,51 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         for (profile in settings.profiles) {
             profileComboBox.addItem(profile)
         }
-        if (settings.activeProfileIndex in settings.profiles.indices) {
-            profileComboBox.selectedIndex = settings.activeProfileIndex
+        if (settings.profiles.isNotEmpty()) {
+            val idx = settings.activeProfileIndex.coerceIn(settings.profiles.indices)
+            profileComboBox.selectedIndex = idx
+            loadProfileData(settings.profiles[idx])
+        } else {
+            lblServerHost.text = "No server"
+            lblServerUser.text = "No server"
+            lblServerRemoteDir.text = "No server"
+            runCommandField.text = ""
+            debugCommandField.text = ""
         }
     }
 
     private fun loadProfileData(p: ServerProfile) {
         runCommandField.text = p.runCommand
         debugCommandField.text = p.debugCommand
+        chkAutoSyncHeader.isSelected = p.autoSyncOnSave
         updateOverviewSummary(p)
         updatePortsTableData()
+
+        isUpdatingMonitorUi = true
+        try {
+            val idx = when (p.monitorMode) {
+                "REALTIME_5S" -> 1
+                "MANUAL" -> 2
+                "OFF" -> 3
+                else -> 0
+            }
+            monitorModeBox.selectedIndex = idx
+        } finally {
+            isUpdatingMonitorUi = false
+        }
+        restartMonitorScheduler()
     }
 
     private fun updateOverviewSummary(p: ServerProfile) {
-        lblServerHost.text = p.host + ":" + p.port
-        lblServerUser.text = p.user + " (" + p.authType.name + ")"
-        lblServerRemoteDir.text = p.remoteProjectPath
+        if (p.host.isBlank()) {
+            lblServerHost.text = "No server configured"
+            lblServerUser.text = "-"
+            lblServerRemoteDir.text = "-"
+        } else {
+            lblServerHost.text = p.host + ":" + p.port
+            lblServerUser.text = p.user + " (" + p.authType.name + ")"
+            lblServerRemoteDir.text = p.remoteProjectPath
+        }
     }
 
     private fun updateConnectionStateUi(connected: Boolean) {
@@ -244,14 +366,19 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
             statusDot.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
             statusText.text = "Connected"
             statusText.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
+            checkRemoteGitStatus()
         } else {
             btnConnectToggle.text = "⚡ Connect"
             btnConnectToggle.foreground = JBColor.foreground()
             statusDot.foreground = JBColor.GRAY
             statusText.text = "Disconnected"
             statusText.foreground = JBColor.foreground()
+            lblGitBranch.text = "🌿 Branch: -"
+            lblGitCommit.text = "📌 Commit: -"
+            lblGitStatus.text = "Status: -"
         }
         updatePortsTableData()
+        restartMonitorScheduler()
     }
 
     // TAB 1: Dashboard
@@ -276,8 +403,15 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         gbc.gridx = 3; gbc.weightx = 1.0; summaryCard.add(lblServerUser, gbc)
 
         gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.0; summaryCard.add(JBLabel("Remote Directory:"), gbc)
-        gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; summaryCard.add(lblServerRemoteDir, gbc)
-        gbc.gridwidth = 1
+        gbc.gridx = 1; gbc.gridwidth = 2; gbc.weightx = 1.0; summaryCard.add(lblServerRemoteDir, gbc)
+
+        val btnOpenDir = JButton("📁 Browse Files")
+        btnOpenDir.toolTipText = "Ushbu masofaviy papkadagi barcha fayllarni ko'rish"
+        btnOpenDir.addActionListener {
+            selectTab("Files")
+            filesPanel.loadDirectory(settings.activeProfile.remoteProjectPath)
+        }
+        gbc.gridx = 3; gbc.gridwidth = 1; gbc.weightx = 0.0; summaryCard.add(btnOpenDir, gbc)
 
         top.add(summaryCard)
         top.add(Box.createVerticalStrut(6))
@@ -286,11 +420,24 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val metersCard = JPanel(BorderLayout(0, 6))
         metersCard.border = IdeBorderFactory.createTitledBorder("Hardware Resource Monitor", false)
 
-        val metersToolbar = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
-        val btnRefresh = JButton("⟳ Refresh Resource Stats")
-        btnRefresh.font = btnRefresh.font.deriveFont(Font.BOLD)
-        btnRefresh.addActionListener { checkServerResources() }
-        metersToolbar.add(btnRefresh)
+        val metersToolbar = JPanel(BorderLayout(6, 0))
+        metersToolbar.border = JBUI.Borders.empty(0, 4, 4, 4)
+
+        val modePanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+        modePanel.add(JBLabel("Rejim:"))
+        monitorModeBox.preferredSize = Dimension(170, 26)
+        modePanel.add(monitorModeBox)
+        monitorStatusLabel.font = monitorStatusLabel.font.deriveFont(Font.BOLD, 11f)
+        modePanel.add(monitorStatusLabel)
+
+        val btnPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
+        btnRefreshStats.font = btnRefreshStats.font.deriveFont(Font.BOLD)
+        btnRefreshStats.toolTipText = "Resurslarni hozirgi holatini yangilash"
+        btnRefreshStats.addActionListener { checkServerResources(silent = false) }
+        btnPanel.add(btnRefreshStats)
+
+        metersToolbar.add(modePanel, BorderLayout.WEST)
+        metersToolbar.add(btnPanel, BorderLayout.EAST)
         metersCard.add(metersToolbar, BorderLayout.NORTH)
 
         val metersGrid = JPanel(GridLayout(3, 1, 0, 6))
@@ -306,6 +453,14 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val quickActionCard = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
         quickActionCard.border = IdeBorderFactory.createTitledBorder("Quick Operations", false)
 
+        val btnBrowseFiles = JButton("📁 Browse Remote Files")
+        btnBrowseFiles.toolTipText = "Serverdagi loyiha papkasi (remoteProjectPath) fayllarini ko'rish"
+        btnBrowseFiles.addActionListener {
+            selectTab("Files")
+            filesPanel.loadDirectory(settings.activeProfile.remoteProjectPath)
+        }
+        quickActionCard.add(btnBrowseFiles)
+
         val btnDryRun = JButton("🔍 Preview / Dry-Run (Diff)")
         btnDryRun.addActionListener {
             syncManager.previewDryRun(settings.activeProfile, { log(it) }, {})
@@ -320,7 +475,23 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         btnPrune.addActionListener { rescueDiskSpace() }
         quickActionCard.add(btnPrune)
 
+        val btnOpenTerminalQuick = JButton("💻 Open SSH Terminal")
+        btnOpenTerminalQuick.toolTipText = "IntelliJ IDEA Terminalida serverga SSH bilan ulanish"
+        btnOpenTerminalQuick.addActionListener {
+            val p = settings.activeProfileOrNull ?: return@addActionListener
+            uz.remote.flow.terminal.RemoteTerminalHelper.openTerminal(project, p)
+        }
+        quickActionCard.add(btnOpenTerminalQuick)
+
+        val btnRemoteConfigs = JButton("⚙ Remote Configs (.env / .yml)")
+        btnRemoteConfigs.toolTipText = "Masofaviy .env va application.yml sozlamalarini boshqarish"
+        btnRemoteConfigs.addActionListener { openRemoteConfigManager() }
+        quickActionCard.add(btnRemoteConfigs)
+
         top.add(quickActionCard)
+        top.add(Box.createVerticalStrut(6))
+        top.add(createGitStatusCard())
+        top.add(Box.createVerticalStrut(6))
 
         // Docker Breakdown Console
         val dockerPanel = JPanel(BorderLayout(0, 4))
@@ -411,24 +582,43 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         top.add(Box.createVerticalStrut(4))
         top.add(debugCard)
 
-        // Console in Center
-        val consolePanel = JPanel(BorderLayout(0, 4))
-        consolePanel.border = IdeBorderFactory.createTitledBorder("Live Execution Output Console", false)
+        // Log & Status Card in Center (all logs go to bottom "Remote Flow Log" window)
+        val logInfoPanel = JPanel(BorderLayout(0, 8))
+        logInfoPanel.border = IdeBorderFactory.createTitledBorder("Ijro Jurnali (Execution Logs)", false)
 
-        val consoleToolbar = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0))
-        val btnAll = JButton("All")
-        btnAll.addActionListener { log("[FILTER] Showing all\n") }
-        consoleToolbar.add(btnAll)
+        val cardContent = JPanel()
+        cardContent.layout = BoxLayout(cardContent, BoxLayout.Y_AXIS)
+        cardContent.border = JBUI.Borders.empty(12)
 
-        val btnClear = JButton("Clear Log")
-        btnClear.addActionListener { consoleView.clear() }
-        consoleToolbar.add(btnClear)
+        val lblNotice = JBLabel("<html><b>Barcha sinxronizatsiya, qurish va ilova loglari pastki 'Remote Flow Log' oynasida real vaqtda ko'rsatiladi.</b><br/>U yerda loglarni qidirish, server bo'yicha filtrlash va tozalash imkoniyati mavjud.</html>")
+        lblNotice.font = lblNotice.font.deriveFont(Font.PLAIN, 12f)
+        cardContent.add(lblNotice)
+        cardContent.add(Box.createVerticalStrut(12))
 
-        consolePanel.add(consoleToolbar, BorderLayout.NORTH)
-        consolePanel.add(consoleView.component, BorderLayout.CENTER)
+        val btnOpenBottomLog = JButton("📜 Pastki 'Remote Flow Log' Oynasini Ochish")
+        btnOpenBottomLog.font = btnOpenBottomLog.font.deriveFont(Font.BOLD, 12f)
+        btnOpenBottomLog.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
+        btnOpenBottomLog.preferredSize = Dimension(320, 36)
+        btnOpenBottomLog.toolTipText = "Pastki paneldagi Remote Flow barcha loglar oynasini ochish"
+        btnOpenBottomLog.addActionListener {
+            com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("Remote Flow Log")?.show(null)
+        }
+        val btnRow = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0))
+        btnRow.add(btnOpenBottomLog)
+        cardContent.add(btnRow)
+        cardContent.add(Box.createVerticalStrut(16))
+
+        val helpBox = JPanel(GridLayout(3, 1, 0, 6))
+        helpBox.border = IdeBorderFactory.createTitledBorder("Quick Endpoints & Debug Info", false)
+        helpBox.add(JBLabel("• JVM Debug: localhost:5005 (IntelliJ 'Remote JVM Debug' konfiguratsiyasi orqali ulaning)"))
+        helpBox.add(JBLabel("• Web Service: http://localhost:8080 (Forwarded ports orqali brauzerda ochiladi)"))
+        helpBox.add(JBLabel("• Health Check: http://localhost:8080/actuator/health"))
+        cardContent.add(helpBox)
+
+        logInfoPanel.add(cardContent, BorderLayout.NORTH)
 
         panel.add(top, BorderLayout.NORTH)
-        panel.add(consolePanel, BorderLayout.CENTER)
+        panel.add(logInfoPanel, BorderLayout.CENTER)
         return panel
     }
 
@@ -564,6 +754,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
         panel.add(dbCard, BorderLayout.NORTH)
         panel.add(portsBox, BorderLayout.CENTER)
+        panel.add(createPortKillerPanel(), BorderLayout.SOUTH)
         return panel
     }
 
@@ -587,12 +778,28 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         inputPanel.add(terminalInputField, BorderLayout.CENTER)
         inputPanel.add(btnExec, BorderLayout.EAST)
 
-        val btnLaunchExternal = JButton("🚀 Launch External Terminal")
-        btnLaunchExternal.font = btnLaunchExternal.font.deriveFont(Font.BOLD)
-        btnLaunchExternal.addActionListener { openExternalTerminal() }
+        val btnOpenIdeaTerminal = JButton("💻 Open in IntelliJ Terminal")
+        btnOpenIdeaTerminal.font = btnOpenIdeaTerminal.font.deriveFont(Font.BOLD)
+        btnOpenIdeaTerminal.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
+        btnOpenIdeaTerminal.toolTipText = "IntelliJ IDEA ning o'zida terminal ochib, serverga avtomatik SSH bilan ulanish"
+        btnOpenIdeaTerminal.addActionListener {
+            val p = settings.activeProfileOrNull ?: return@addActionListener
+            uz.remote.flow.terminal.RemoteTerminalHelper.openTerminal(project, p)
+        }
+
+        val btnLaunchExternal = JButton("🚀 External Terminal")
+        btnLaunchExternal.toolTipText = "Alohida PowerShell oynasida SSH bilan ochish"
+        btnLaunchExternal.addActionListener {
+            val p = settings.activeProfileOrNull ?: return@addActionListener
+            uz.remote.flow.terminal.RemoteTerminalHelper.openExternalTerminal(project, p)
+        }
+
+        val btnPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
+        btnPanel.add(btnOpenIdeaTerminal)
+        btnPanel.add(btnLaunchExternal)
 
         topBar.add(inputPanel, BorderLayout.CENTER)
-        topBar.add(btnLaunchExternal, BorderLayout.EAST)
+        topBar.add(btnPanel, BorderLayout.EAST)
 
         panel.add(topBar, BorderLayout.NORTH)
         panel.add(terminalConsoleView.component, BorderLayout.CENTER)
@@ -629,14 +836,8 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     }
 
     private fun openExternalTerminal() {
-        val p = settings.activeProfile
-        val cmd = "start powershell -NoExit -Command \"Write-Host 'Connecting to " + p.name + "...' -ForegroundColor Cyan; ssh -p " + p.port + " " + p.user + "@" + p.host + "\""
-        try {
-            Runtime.getRuntime().exec(arrayOf("cmd.exe", "/c", cmd))
-            log("[TERMINAL] External SSH terminal launched for " + p.user + "@" + p.host + "\n")
-        } catch (e: Exception) {
-            log("[TERMINAL ERROR] " + e.message + "\n", true)
-        }
+        val p = settings.activeProfileOrNull ?: return
+        uz.remote.flow.terminal.RemoteTerminalHelper.openTerminal(project, p)
     }
 
     private fun executeRemoteRun() {
@@ -647,7 +848,8 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
         val p = settings.activeProfile
         p.runCommand = runCommandField.text.trim()
-        val cmd = p.runCommand
+        val rawCmd = p.runCommand
+        val cmd = "chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
         log("[REMOTE RUN] 1. Eng yangi kodlar serverga sinxronlanmoqda...\n")
 
         syncManager.syncSingleServer(
@@ -657,7 +859,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
                 if (!success) {
                     log("[REMOTE RUN WARNING] Sinxronizatsiyada ogohlantirish bo'ldi, buyruq bajarilmoqda...\n", true)
                 }
-                log("[REMOTE RUN] 2. Masofaviy buyruq serverda bajarilmoqda: $cmd\n")
+                log("[REMOTE RUN] 2. Masofaviy buyruq serverda bajarilmoqda: $rawCmd\n")
                 connectionManager.executeRemoteCommand(
                     cmd = cmd,
                     workingDir = p.remoteProjectPath,
@@ -680,14 +882,15 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
         val p = settings.activeProfile
         p.debugCommand = debugCommandField.text.trim()
-        val cmd = p.debugCommand
+        val rawCmd = p.debugCommand
+        val cmd = "chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
         log("[REMOTE DEBUG] 1. Kodlar serverga yuklanmoqda...\n")
 
         syncManager.syncSingleServer(
             profile = p,
             onLog = { log(it) },
             onComplete = { _ ->
-                log("[REMOTE DEBUG] 2. Ilova debug rejimida (port 5005) serverda ishga tushirilmoqda: $cmd\n")
+                log("[REMOTE DEBUG] 2. Ilova debug rejimida (port 5005) serverda ishga tushirilmoqda: $rawCmd\n")
                 connectionManager.executeRemoteCommand(
                     cmd = cmd,
                     workingDir = p.remoteProjectPath,
@@ -810,13 +1013,25 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     }
 
     private fun log(message: String, isError: Boolean = false) {
-        ApplicationManager.getApplication().invokeLater {
-            consoleView.print(message, if (isError) ConsoleViewContentType.ERROR_OUTPUT else ConsoleViewContentType.NORMAL_OUTPUT)
+        val serverName = settings.activeProfileOrNull?.name ?: ""
+        val category = when {
+            message.contains("[DOCKER") -> uz.remote.flow.logging.LogCategory.DOCKER
+            message.contains("[SYNC") || message.contains("[RSYNC") || message.contains("[SFTP") -> uz.remote.flow.logging.LogCategory.SYNC
+            message.contains("[REMOTE RUN") || message.contains("[REMOTE DEBUG") || message.contains("[STOP") -> uz.remote.flow.logging.LogCategory.RUN
+            message.contains("[CONNECT") || message.contains("[SSH") -> uz.remote.flow.logging.LogCategory.SSH
+            message.contains("[FILE") -> uz.remote.flow.logging.LogCategory.FILES
+            else -> uz.remote.flow.logging.LogCategory.ALL
         }
+        logService.log(message, category, serverName, isError)
     }
 
     private fun connectSSH() {
-        val p = settings.activeProfile
+        val p = settings.activeProfileOrNull
+        if (p == null || p.host.isBlank()) {
+            log("[WARNING] Server profili mavjud emas! Avval sozlamalardan server qo'shing.\n", true)
+            ShowSettingsUtil.getInstance().showSettingsDialog(project, RemoteFlowConfigurable::class.java)
+            return
+        }
         log("[CONNECTING] Connecting to " + p.name + " (" + p.user + "@" + p.host + ":" + p.port + ")...\n")
 
         connectionManager.connect(
@@ -836,9 +1051,76 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         log("[DISCONNECTED] SSH session and tunnels closed.\n")
     }
 
-    private fun checkServerResources() {
+    private fun stopMonitorScheduler() {
+        monitorScheduledTask?.cancel(false)
+        monitorScheduledTask = null
+    }
+
+    private fun restartMonitorScheduler() {
+        stopMonitorScheduler()
+
+        val p = settings.activeProfileOrNull
+        val mode = p?.monitorMode ?: when (monitorModeBox.selectedIndex) {
+            0 -> "REALTIME_3S"
+            1 -> "REALTIME_5S"
+            2 -> "MANUAL"
+            else -> "OFF"
+        }
+
+        ApplicationManager.getApplication().invokeLater {
+            if (!connectionManager.isConnected) {
+                monitorStatusLabel.text = "⏸ Paused (Offline)"
+                monitorStatusLabel.foreground = JBColor.GRAY
+                btnRefreshStats.isEnabled = false
+                return@invokeLater
+            }
+
+            btnRefreshStats.isEnabled = (mode != "OFF")
+
+            when (mode) {
+                "OFF" -> {
+                    monitorStatusLabel.text = "○ Off"
+                    monitorStatusLabel.foreground = JBColor.GRAY
+                    cpuBar.value = 0
+                    cpuLabel.text = "Off"
+                    ramBar.value = 0
+                    ramLabel.text = "Off"
+                    diskBar.value = 0
+                    diskLabel.text = "Off"
+                }
+                "MANUAL" -> {
+                    monitorStatusLabel.text = "● Manual"
+                    monitorStatusLabel.foreground = JBColor(Color(59, 130, 246), Color(96, 165, 250))
+                }
+                "REALTIME_5S" -> {
+                    monitorStatusLabel.text = "● Live (5s)"
+                    monitorStatusLabel.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
+                    checkServerResources(silent = true)
+                    monitorScheduledTask = monitorExecutor.scheduleWithFixedDelay({
+                        if (connectionManager.isConnected) {
+                            checkServerResources(silent = true)
+                        }
+                    }, 5, 5, TimeUnit.SECONDS)
+                }
+                else -> { // "REALTIME_3S" or "REALTIME"
+                    monitorStatusLabel.text = "● Live (3s)"
+                    monitorStatusLabel.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
+                    checkServerResources(silent = true)
+                    monitorScheduledTask = monitorExecutor.scheduleWithFixedDelay({
+                        if (connectionManager.isConnected) {
+                            checkServerResources(silent = true)
+                        }
+                    }, 3, 3, TimeUnit.SECONDS)
+                }
+            }
+        }
+    }
+
+    private fun checkServerResources(silent: Boolean = false) {
         if (!connectionManager.isConnected) {
-            log("[WARNING] Serverga ulanmagansiz! Avval 'Connect' tugmasini bosing.\n", true)
+            if (!silent) {
+                log("[WARNING] Serverga ulanmagansiz! Avval 'Connect' tugmasini bosing.\n", true)
+            }
             return
         }
 
@@ -859,9 +1141,9 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
                     }
                 }
             },
-            onLog = { log(it) },
+            onLog = { if (!silent) log(it) },
             onComplete = { success ->
-                if (!success) {
+                if (!success && !silent) {
                     log("[ERROR] Server resurslarini olishda xatolik yuz berdi.\n", true)
                 }
             }
@@ -879,7 +1161,12 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     }
 
     private fun syncFiles() {
-        val p = settings.activeProfile
+        val p = settings.activeProfileOrNull
+        if (p == null || p.host.isBlank()) {
+            log("[WARNING] Server profili mavjud emas! Avval sozlamalardan server qo'shing.\n", true)
+            ShowSettingsUtil.getInstance().showSettingsDialog(project, RemoteFlowConfigurable::class.java)
+            return
+        }
         syncManager.syncSingleServer(
             profile = p,
             onLog = { log(it) },
@@ -967,5 +1254,217 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
                 }
             }
         }
+    }
+
+    private fun createPortKillerPanel(): JPanel {
+        val panel = JPanel(BorderLayout(0, 6))
+        panel.border = IdeBorderFactory.createTitledBorder("⚡ Remote Port Clash Inspector & Process Killer", false)
+
+        val top = JPanel(BorderLayout(6, 0))
+        val left = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))
+        left.add(JBLabel("Target Port:"))
+        val portField = JBTextField("8080", 6)
+        left.add(portField)
+
+        val presets = listOf("8080", "5005", "80", "443", "5432", "6379")
+        for (pr in presets) {
+            val b = JButton(pr)
+            b.preferredSize = Dimension(b.preferredSize.width, 24)
+            b.addActionListener { portField.text = pr }
+            left.add(b)
+        }
+        top.add(left, BorderLayout.WEST)
+
+        val right = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 2))
+        val statusText = JBLabel("Ready")
+        statusText.font = statusText.font.deriveFont(Font.PLAIN, 11f)
+
+        val btnCheck = JButton("🔍 Check Port")
+        btnCheck.toolTipText = "Port band yoki bo'shligini tekshirish (lsof / fuser / ss)"
+        btnCheck.addActionListener {
+            val port = portField.text.trim()
+            if (port.isBlank()) return@addActionListener
+            if (!connectionManager.isConnected) {
+                Messages.showWarningDialog(project, "Serverga ulanmagansiz!", "Port Inspector")
+                return@addActionListener
+            }
+            statusText.text = "Checking port $port..."
+            val cmd = "fuser -v $port/tcp 2>&1 || lsof -i :$port -P -n 2>&1 || ss -tulpn | grep :$port 2>&1 || echo 'Port $port bo\\'sh (jarayon yo\\'q)'"
+            connectionManager.executeRemoteCommand(
+                cmd = cmd,
+                workingDir = "",
+                onOutput = { line ->
+                    logService.log("[PORT $port CHECK] $line", uz.remote.flow.logging.LogCategory.SSH, settings.activeProfile.name)
+                },
+                onComplete = { _ ->
+                    ApplicationManager.getApplication().invokeLater {
+                        statusText.text = "Port $port tekshirildi (Log oynaga qarang)"
+                        Messages.showInfoMessage(project, "Port $port bo'yicha ma'lumot pastki 'Remote Flow Log' oynasiga chiqarildi.", "Port Check")
+                    }
+                }
+            )
+        }
+        right.add(btnCheck)
+
+        val btnKill = JButton("🛑 Kill Process on Port")
+        btnKill.font = btnKill.font.deriveFont(Font.BOLD)
+        btnKill.foreground = JBColor.RED
+        btnKill.toolTipText = "Ushbu portni band qilgan jarayonni majburan to'xtatish (SIGKILL)"
+        btnKill.addActionListener {
+            val port = portField.text.trim()
+            if (port.isBlank()) return@addActionListener
+            if (!connectionManager.isConnected) {
+                Messages.showWarningDialog(project, "Serverga ulanmagansiz!", "Process Killer")
+                return@addActionListener
+            }
+            val confirm = Messages.showYesNoDialog(
+                project,
+                "Serverdagi $port portini band qilgan barcha jarayonlar majburan to'xtatiladi (SIGKILL).\n\nDavom etasizmi?",
+                "Kill Process on Port $port",
+                Messages.getWarningIcon()
+            )
+            if (confirm != Messages.YES) return@addActionListener
+
+            statusText.text = "Killing process on port $port..."
+            val killCmd = "fuser -k -9 $port/tcp 2>&1 || (PID=\$(lsof -t -i :$port); if [ -n \"\$PID\" ]; then kill -9 \$PID && echo \"Killed PID \$PID\"; else echo \"No process found on port $port\"; fi)"
+            connectionManager.executeRemoteCommand(
+                cmd = killCmd,
+                workingDir = "",
+                onOutput = { line ->
+                    logService.log("[PORT $port KILL] $line", uz.remote.flow.logging.LogCategory.SSH, settings.activeProfile.name)
+                },
+                onComplete = { _ ->
+                    ApplicationManager.getApplication().invokeLater {
+                        statusText.text = "Port $port bo'shatildi!"
+                        connectionManager.notifyUser(
+                            "Port Killer 🛑",
+                            "Serverdagi $port portidagi jarayon to'xtatildi!",
+                            NotificationType.INFORMATION
+                        )
+                    }
+                }
+            )
+        }
+        right.add(btnKill)
+
+        top.add(right, BorderLayout.EAST)
+        panel.add(top, BorderLayout.CENTER)
+        return panel
+    }
+
+    private fun createGitStatusCard(): JPanel {
+        val card = JPanel(BorderLayout(0, 4))
+        card.border = IdeBorderFactory.createTitledBorder("Masofaviy Git Holati (Remote Git Status)", false)
+
+        val infoPanel = JPanel(GridLayout(1, 3, 8, 0))
+        infoPanel.border = JBUI.Borders.empty(2, 6)
+
+        lblGitBranch.font = lblGitBranch.font.deriveFont(Font.BOLD, 12f)
+        lblGitBranch.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
+        infoPanel.add(lblGitBranch)
+
+        lblGitCommit.font = lblGitCommit.font.deriveFont(Font.PLAIN, 11f)
+        infoPanel.add(lblGitCommit)
+
+        lblGitStatus.font = lblGitStatus.font.deriveFont(Font.PLAIN, 11f)
+        infoPanel.add(lblGitStatus)
+
+        val btnRow = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
+        val btnRefreshGit = JButton("⟳ Check Git")
+        btnRefreshGit.toolTipText = "Masofaviy Git branch va statusni tekshirish"
+        btnRefreshGit.addActionListener { checkRemoteGitStatus() }
+        btnRow.add(btnRefreshGit)
+
+        val btnGitPull = JButton("⬇ Git Pull")
+        btnGitPull.toolTipText = "Serverda eng so'nggi o'zgarishlarni tortib olish (git pull)"
+        btnGitPull.addActionListener { executeRemoteGitPull() }
+        btnRow.add(btnGitPull)
+
+        val btnGitStashPull = JButton("🔄 Stash & Pull")
+        btnGitStashPull.toolTipText = "Serverdagi o'zgarishlarni stash qilib, pull qilish"
+        btnGitStashPull.addActionListener { executeRemoteGitStashPull() }
+        btnRow.add(btnGitStashPull)
+
+        card.add(infoPanel, BorderLayout.CENTER)
+        card.add(btnRow, BorderLayout.EAST)
+        return card
+    }
+
+    private fun checkRemoteGitStatus() {
+        val p = settings.activeProfileOrNull ?: return
+        if (!connectionManager.isConnected) {
+            lblGitBranch.text = "🌿 Git: Offline"
+            return
+        }
+        val cmd = "git rev-parse --abbrev-ref HEAD 2>/dev/null; echo '---RF_DIV---'; git log -1 --format='%h - %s (%cr)' 2>/dev/null; echo '---RF_DIV---'; git status -s 2>/dev/null"
+        val outputSb = StringBuilder()
+        connectionManager.executeRemoteCommand(
+            cmd = cmd,
+            workingDir = p.remoteProjectPath,
+            onOutput = { outputSb.append(it) },
+            onComplete = { _ ->
+                ApplicationManager.getApplication().invokeLater {
+                    val parts = outputSb.toString().split("---RF_DIV---")
+                    val branch = parts.getOrNull(0)?.trim()?.lines()?.lastOrNull()?.trim() ?: ""
+                    val commit = parts.getOrNull(1)?.trim()?.lines()?.firstOrNull()?.trim() ?: ""
+                    val statusLines = parts.getOrNull(2)?.trim()?.lines()?.filter { it.isNotBlank() } ?: emptyList()
+
+                    if (branch.isNotBlank() && !branch.contains("fatal:")) {
+                        lblGitBranch.text = "🌿 Branch: $branch"
+                        lblGitCommit.text = if (commit.isNotBlank()) "📌 $commit" else "📌 -"
+                        lblGitStatus.text = if (statusLines.isEmpty()) "✔ Clean" else "⚠ ${statusLines.size} ta o'zgargan fayl"
+                        lblGitStatus.foreground = if (statusLines.isEmpty()) JBColor(Color(16, 185, 129), Color(16, 185, 129)) else JBColor.ORANGE
+                    } else {
+                        lblGitBranch.text = "🌿 Git: Repozitoriya emas"
+                        lblGitCommit.text = "-"
+                        lblGitStatus.text = "-"
+                    }
+                }
+            }
+        )
+    }
+
+    private fun executeRemoteGitPull() {
+        val p = settings.activeProfileOrNull ?: return
+        if (!connectionManager.isConnected) {
+            log("[WARNING] Serverga ulanmagansiz! Avval 'Connect' tugmasini bosing.\n", true)
+            return
+        }
+        log("[GIT PULL] Serverda git pull buyrug'i bajarilmoqda...\n")
+        connectionManager.executeRemoteCommand(
+            cmd = "git pull",
+            workingDir = p.remoteProjectPath,
+            onOutput = { log(it) },
+            onComplete = { code ->
+                log("[GIT PULL FINISHED] Exit code: $code\n")
+                checkRemoteGitStatus()
+                connectionManager.notifyUser("Git Pull", "Serverda git pull bajarildi (Exit code: $code)", NotificationType.INFORMATION)
+            }
+        )
+    }
+
+    private fun executeRemoteGitStashPull() {
+        val p = settings.activeProfileOrNull ?: return
+        if (!connectionManager.isConnected) {
+            log("[WARNING] Serverga ulanmagansiz! Avval 'Connect' tugmasini bosing.\n", true)
+            return
+        }
+        log("[GIT STASH & PULL] Serverda stash va pull buyrug'i bajarilmoqda...\n")
+        connectionManager.executeRemoteCommand(
+            cmd = "git stash && git pull && git stash pop || git pull",
+            workingDir = p.remoteProjectPath,
+            onOutput = { log(it) },
+            onComplete = { code ->
+                log("[GIT STASH & PULL FINISHED] Exit code: $code\n")
+                checkRemoteGitStatus()
+                connectionManager.notifyUser("Git Stash & Pull", "Serverda git stash & pull bajarildi", NotificationType.INFORMATION)
+            }
+        )
+    }
+
+    private fun openRemoteConfigManager(initialFile: String? = null) {
+        val p = settings.activeProfileOrNull ?: return
+        val dialog = uz.remote.flow.config.RemoteConfigManagerDialog(project, p, initialFile)
+        dialog.show()
     }
 }

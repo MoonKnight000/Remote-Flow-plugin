@@ -38,7 +38,40 @@ class RemoteConnectionManager(private val project: Project) {
     val isConnected: Boolean
         get() = sshClient?.isConnected == true && sshClient?.isAuthenticated == true
 
-    fun testConnection(profile: ServerProfile = config.activeProfile, onResult: (Boolean, String) -> Unit) {
+    fun getActiveSshClient(): SSHClient? = if (isConnected) sshClient else null
+
+    fun <T> withSshClient(
+        profile: ServerProfile = config.activeProfile,
+        action: (client: SSHClient) -> T
+    ): T {
+        val active = if (isConnected && sshClient != null && sshClient?.isConnected == true) {
+            sshClient
+        } else null
+
+        var tempClient: SSHClient? = null
+        return try {
+            val client = active ?: run {
+                tempClient = SSHClient().apply {
+                    addHostKeyVerifier(PromiscuousVerifier())
+                    connect(profile.host, profile.port)
+                    when (profile.authType) {
+                        AuthType.PASSWORD -> authPassword(profile.user, profile.password)
+                        AuthType.PRIVATE_KEY -> authPublickey(profile.user, loadKeys(profile.privateKeyPath))
+                    }
+                }
+                tempClient!!
+            }
+            action(client)
+        } finally {
+            try { tempClient?.disconnect(); tempClient?.close() } catch (_: Exception) {}
+        }
+    }
+
+    fun testConnection(
+        profile: ServerProfile = config.activeProfile,
+        checkRemoteDir: String? = null,
+        onResult: (ok: Boolean, dirExists: Boolean, msg: String) -> Unit
+    ) {
         executor.submit {
             var tempClient: SSHClient? = null
             try {
@@ -55,14 +88,158 @@ class RemoteConnectionManager(private val project: Project) {
                 }
 
                 val ok = tempClient.isConnected && tempClient.isAuthenticated
+                var dirExists = true
+
+                if (ok && !checkRemoteDir.isNullOrBlank()) {
+                    try {
+                        val session = tempClient.startSession()
+                        val cmd = session.exec("test -d \"$checkRemoteDir\"")
+                        cmd.join(5, TimeUnit.SECONDS)
+                        dirExists = (cmd.exitStatus == 0)
+                        session.close()
+                    } catch (_: Exception) {
+                        dirExists = false
+                    }
+                }
+
                 tempClient.disconnect()
                 tempClient.close()
 
-                if (ok) onResult(true, "Ulanish muvaffaqiyatli! Server tayyor: " + profile.name)
-                else onResult(false, "Autentifikatsiya rad etildi. Login/parolni tekshiring.")
+                if (ok) onResult(true, dirExists, "Ulanish muvaffaqiyatli! Server tayyor: " + profile.name)
+                else onResult(false, false, "Autentifikatsiya rad etildi. Login/parolni tekshiring.")
             } catch (e: Exception) {
                 try { tempClient?.disconnect(); tempClient?.close() } catch (_: Exception) {}
-                onResult(false, "Ulanib bo'lmadi: " + (e.message ?: e.toString()))
+                onResult(false, false, "Ulanib bo'lmadi: " + (e.message ?: e.toString()))
+            }
+        }
+    }
+
+    fun testConnection(profile: ServerProfile = config.activeProfile, onResult: (Boolean, String) -> Unit) {
+        testConnection(profile, checkRemoteDir = null) { ok, _, msg ->
+            onResult(ok, msg)
+        }
+    }
+
+    fun checkDirectoryExists(
+        profile: ServerProfile = config.activeProfile,
+        dirPath: String,
+        onResult: (exists: Boolean, error: String?) -> Unit
+    ) {
+        executor.submit {
+            val client = if (isConnected && sshClient != null && sshClient?.isConnected == true) {
+                sshClient
+            } else null
+
+            var tempClient: SSHClient? = null
+            try {
+                val active = client ?: run {
+                    tempClient = SSHClient().apply {
+                        addHostKeyVerifier(PromiscuousVerifier())
+                        connect(profile.host, profile.port)
+                        when (profile.authType) {
+                            AuthType.PASSWORD -> authPassword(profile.user, profile.password)
+                            AuthType.PRIVATE_KEY -> authPublickey(profile.user, loadKeys(profile.privateKeyPath))
+                        }
+                    }
+                    tempClient!!
+                }
+
+                val session = active.startSession()
+                val cmd = session.exec("test -d \"$dirPath\"")
+                cmd.join(5, TimeUnit.SECONDS)
+                val status = cmd.exitStatus ?: -1
+                session.close()
+                onResult(status == 0, null)
+            } catch (e: Exception) {
+                onResult(false, e.message ?: e.toString())
+            } finally {
+                try { tempClient?.disconnect(); tempClient?.close() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun createDirectory(
+        profile: ServerProfile = config.activeProfile,
+        dirPath: String,
+        onResult: (success: Boolean, error: String?) -> Unit
+    ) {
+        executor.submit {
+            val client = if (isConnected && sshClient != null && sshClient?.isConnected == true) {
+                sshClient
+            } else null
+
+            var tempClient: SSHClient? = null
+            try {
+                val active = client ?: run {
+                    tempClient = SSHClient().apply {
+                        addHostKeyVerifier(PromiscuousVerifier())
+                        connect(profile.host, profile.port)
+                        when (profile.authType) {
+                            AuthType.PASSWORD -> authPassword(profile.user, profile.password)
+                            AuthType.PRIVATE_KEY -> authPublickey(profile.user, loadKeys(profile.privateKeyPath))
+                        }
+                    }
+                    tempClient!!
+                }
+
+                val session = active.startSession()
+                val cmd = session.exec("mkdir -p \"$dirPath\"")
+                cmd.join(10, TimeUnit.SECONDS)
+                val status = cmd.exitStatus ?: -1
+                session.close()
+                onResult(status == 0, if (status == 0) null else "Server xatosi: status $status")
+            } catch (e: Exception) {
+                onResult(false, e.message ?: e.toString())
+            } finally {
+                try { tempClient?.disconnect(); tempClient?.close() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun uploadFile(
+        profile: ServerProfile = config.activeProfile,
+        localFile: java.io.File,
+        remotePath: String,
+        onProgress: (String) -> Unit,
+        onComplete: (Boolean) -> Unit
+    ) {
+        executor.submit {
+            val client = if (isConnected && sshClient != null && sshClient?.isConnected == true) {
+                sshClient
+            } else null
+
+            var tempClient: SSHClient? = null
+            try {
+                val active = client ?: run {
+                    tempClient = SSHClient().apply {
+                        addHostKeyVerifier(PromiscuousVerifier())
+                        connect(profile.host, profile.port)
+                        when (profile.authType) {
+                            AuthType.PASSWORD -> authPassword(profile.user, profile.password)
+                            AuthType.PRIVATE_KEY -> authPublickey(profile.user, loadKeys(profile.privateKeyPath))
+                        }
+                    }
+                    tempClient!!
+                }
+
+                val sftp = active.newSFTPClient()
+                try {
+                    val cleanRemote = remotePath.replace('\\', '/')
+                    val parent = cleanRemote.substringBeforeLast('/')
+                    if (parent.isNotBlank()) {
+                        try { sftp.mkdirs(parent) } catch (_: Exception) {}
+                    }
+                    sftp.put(localFile.absolutePath, cleanRemote)
+                } finally {
+                    try { sftp.close() } catch (_: Exception) {}
+                }
+
+                onComplete(true)
+            } catch (e: Exception) {
+                onProgress("[SFTP ERROR] " + (e.message ?: e.toString()) + "\n")
+                onComplete(false)
+            } finally {
+                try { tempClient?.disconnect(); tempClient?.close() } catch (_: Exception) {}
             }
         }
     }

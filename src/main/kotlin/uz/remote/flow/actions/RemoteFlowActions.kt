@@ -200,11 +200,8 @@ class RemoteFlowTerminalAction : AnAction("Open Remote Terminal", "Masofaviy ser
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val settings = RemoteFlowSettings.getInstance(project)
-        val p = settings.activeProfile
-        val cmd = "start powershell -NoExit -Command \"Write-Host 'Connecting to " + p.name + "...' -ForegroundColor Cyan; ssh -p " + p.port + " " + p.user + "@" + p.host + "\""
-        try {
-            Runtime.getRuntime().exec(arrayOf("cmd.exe", "/c", cmd))
-        } catch (_: Exception) {}
+        val p = settings.activeProfileOrNull ?: return
+        uz.remote.flow.terminal.RemoteTerminalHelper.openTerminal(project, p)
     }
 }
 
@@ -247,9 +244,54 @@ class RemoteFlowDockerDownAction : AnAction("Docker Compose Down", "Serverda doc
     }
 }
 
+class RemoteFlowBrowseFilesAction : AnAction("Browse Remote Files...", "Masofaviy server papka va fayllarini ko'rish", RemoteFlowIcons.REMOTE_FLOW) {
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        val settings = RemoteFlowSettings.getInstance(project)
+        val profile = settings.activeProfileOrNull
+        if (profile == null || profile.host.isBlank()) {
+            ShowSettingsUtil.getInstance().showSettingsDialog(project, RemoteFlowConfigurable::class.java)
+            return
+        }
+        val tw = ToolWindowManager.getInstance(project).getToolWindow("RemoteFlow")
+        if (tw != null) {
+            tw.show {
+                val content = tw.contentManager.getContent(0)
+                val panel = content?.component as? uz.remote.flow.ui.RemoteFlowMainPanel
+                panel?.selectTab("Files")
+            }
+        } else {
+            val dialog = uz.remote.flow.ui.RemoteFileExplorerDialog(project, profile)
+            dialog.show()
+        }
+    }
+}
+
+class RemoteFlowOpenLogAction : AnAction("Show Remote Flow Logs", "Pastki paneldagi barcha loglar oynasini ochish", RemoteFlowIcons.REMOTE_FLOW) {
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        val tw = ToolWindowManager.getInstance(project).getToolWindow("Remote Flow Log")
+        tw?.show(null)
+    }
+}
+
 class RemoteFlowOpenSettingsAction : AnAction("Configure Remote Flow...", "Serverlar va sozlamalarni boshqarish", RemoteFlowIcons.REMOTE_FLOW) {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         ShowSettingsUtil.getInstance().showSettingsDialog(project, RemoteFlowConfigurable::class.java)
+    }
+}
+
+class RemoteFlowConfigAction : AnAction("Remote Configs (.env / .yml)...", "Masofaviy .env va application.yml sozlamalarini boshqarish", RemoteFlowIcons.REMOTE_FLOW) {
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        val settings = RemoteFlowSettings.getInstance(project)
+        val profile = settings.activeProfileOrNull
+        if (profile == null || profile.host.isBlank()) {
+            ShowSettingsUtil.getInstance().showSettingsDialog(project, RemoteFlowConfigurable::class.java)
+            return
+        }
+        val dialog = uz.remote.flow.config.RemoteConfigManagerDialog(project, profile)
+        dialog.show()
     }
 }

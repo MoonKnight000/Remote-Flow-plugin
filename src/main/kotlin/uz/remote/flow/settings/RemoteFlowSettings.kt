@@ -17,7 +17,7 @@ import uz.remote.flow.ssh.ServerProfile
 class RemoteFlowSettings(private val project: Project) : PersistentStateComponent<RemoteFlowSettings.State> {
 
     class State {
-        var profiles: MutableList<ServerProfile> = mutableListOf(ServerProfile())
+        var profiles: MutableList<ServerProfile> = mutableListOf()
         var activeProfileIndex: Int = 0
         var autoReconnect: Boolean = true
     }
@@ -28,10 +28,10 @@ class RemoteFlowSettings(private val project: Project) : PersistentStateComponen
 
     override fun loadState(state: State) {
         XmlSerializerUtil.copyBean(state, myState)
-        if (myState.profiles.isEmpty()) {
-            myState.profiles.add(ServerProfile())
+        myState.profiles.forEach {
+            it.name = uz.remote.flow.ssh.cleanServerName(it.name)
         }
-        if (myState.activeProfileIndex !in myState.profiles.indices) {
+        if (myState.profiles.isNotEmpty() && myState.activeProfileIndex !in myState.profiles.indices) {
             myState.activeProfileIndex = 0
         }
     }
@@ -43,16 +43,20 @@ class RemoteFlowSettings(private val project: Project) : PersistentStateComponen
             myState.activeProfileIndex = value.activeProfileIndex
         }
 
-    val activeProfile: ServerProfile
+    val activeProfileOrNull: ServerProfile?
         get() {
-            if (myState.activeProfileIndex !in myState.profiles.indices) {
-                myState.activeProfileIndex = 0
-            }
-            if (myState.profiles.isEmpty()) {
-                myState.profiles.add(ServerProfile())
-            }
-            return myState.profiles[myState.activeProfileIndex]
+            if (myState.profiles.isEmpty()) return null
+            val idx = myState.activeProfileIndex.coerceIn(myState.profiles.indices)
+            return myState.profiles[idx]
         }
+
+    val activeProfile: ServerProfile
+        get() = activeProfileOrNull ?: ServerProfile(
+            name = "No Server",
+            host = "",
+            localProjectPath = project.basePath ?: "",
+            remoteProjectPath = ""
+        )
 
     var activeProfileIndex: Int
         get() = myState.activeProfileIndex

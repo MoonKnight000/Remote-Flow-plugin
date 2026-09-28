@@ -74,7 +74,15 @@ class RemoteFlowStatusBarWidget(private val project: Project) : CustomStatusBarW
     private fun updateStatus() {
         val connMgr = RemoteConnectionManager.getInstance(project)
         val settings = RemoteFlowSettings.getInstance(project)
-        val active = settings.activeProfile
+        val active = settings.activeProfileOrNull
+
+        if (active == null) {
+            textLabel.text = "Remote Flow: No server"
+            textLabel.foreground = JBColor.GRAY
+            panel.toolTipText = "Remote Flow: No server configured. Click to configure."
+            statusBar?.updateWidget(ID)
+            return
+        }
 
         if (connMgr.isConnected) {
             textLabel.text = "${active.name} ●"
@@ -94,43 +102,52 @@ class RemoteFlowStatusBarWidget(private val project: Project) : CustomStatusBarW
         val settings = RemoteFlowSettings.getInstance(project)
         val syncMgr = FastSyncManager(project)
 
-        group.add(Separator.create("Active Server Switcher"))
-        for ((idx, p) in settings.profiles.withIndex()) {
-            val isActive = idx == settings.activeProfileIndex
-            val prefix = if (isActive) "✓ " else "   "
-            group.add(object : AnAction("$prefix${p.name} (${p.host})") {
-                override fun actionPerformed(e: AnActionEvent) {
-                    if (settings.activeProfileIndex != idx) {
-                        settings.activeProfileIndex = idx
-                        updateStatus()
-                        project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).profileChanged(p)
+        if (settings.profiles.isNotEmpty()) {
+            group.add(Separator.create("Active Server Switcher"))
+            for ((idx, p) in settings.profiles.withIndex()) {
+                val isActive = idx == settings.activeProfileIndex
+                val prefix = if (isActive) "✓ " else "   "
+                group.add(object : AnAction("$prefix${p.name} (${p.host})") {
+                    override fun actionPerformed(e: AnActionEvent) {
+                        if (settings.activeProfileIndex != idx) {
+                            settings.activeProfileIndex = idx
+                            updateStatus()
+                            project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).profileChanged(p)
+                        }
                     }
-                }
-            })
-        }
+                })
+            }
 
-        group.add(Separator.create("Quick Control"))
-        if (connMgr.isConnected) {
-            group.add(object : AnAction("⏹ Disconnect (${settings.activeProfile.name})") {
+            val active = settings.activeProfile
+            group.add(Separator.create("Quick Control"))
+            if (connMgr.isConnected) {
+                group.add(object : AnAction("⏹ Disconnect (${active.name})") {
+                    override fun actionPerformed(e: AnActionEvent) {
+                        connMgr.disconnect()
+                    }
+                })
+            } else {
+                group.add(object : AnAction("⚡ Connect to ${active.name}") {
+                    override fun actionPerformed(e: AnActionEvent) {
+                        connMgr.connect(active, {}, {})
+                    }
+                })
+            }
+
+            group.add(object : AnAction("🔄 Fast Sync All Files") {
                 override fun actionPerformed(e: AnActionEvent) {
-                    connMgr.disconnect()
+                    syncMgr.syncSingleServer(active, {}, { ok ->
+                        if (ok) connMgr.notifyUser("Remote Flow", "Fast Sync yakunlandi!")
+                    })
                 }
             })
         } else {
-            group.add(object : AnAction("⚡ Connect to ${settings.activeProfile.name}") {
+            group.add(object : AnAction("➕ Add Server Profile...") {
                 override fun actionPerformed(e: AnActionEvent) {
-                    connMgr.connect(settings.activeProfile, {}, {})
+                    ShowSettingsUtil.getInstance().showSettingsDialog(project, RemoteFlowConfigurable::class.java)
                 }
             })
         }
-
-        group.add(object : AnAction("🔄 Fast Sync All Files") {
-            override fun actionPerformed(e: AnActionEvent) {
-                syncMgr.syncSingleServer(settings.activeProfile, {}, { ok ->
-                    if (ok) connMgr.notifyUser("Remote Flow", "Fast Sync yakunlandi!")
-                })
-            }
-        })
 
         group.add(object : AnAction("🖥 Open Remote Flow Dashboard") {
             override fun actionPerformed(e: AnActionEvent) {
