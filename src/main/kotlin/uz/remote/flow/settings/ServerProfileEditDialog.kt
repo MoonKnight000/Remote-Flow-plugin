@@ -45,7 +45,7 @@ class ServerProfileEditDialog(
 
     private val excludePatternsField = JBTextField()
     private val btnResetExcludes = JButton("⟳")
-    private val rsyncPathField = TextFieldWithBrowseButton()
+    private val rsyncPathField = TextFieldWithBrowseButton(JBTextField())
     private val btnAutoDetectRsync = JButton("🔍 Auto")
 
     private val runCommandField = JBTextField(profile.runCommand)
@@ -173,12 +173,15 @@ class ServerProfileEditDialog(
             excludePatternsField.text = uz.remote.flow.ssh.defaultExcludes()
         }
 
-        btnAutoDetectRsync.toolTipText = "Tizimdan rsync.exe ni avtomatik aniqlash"
+        (rsyncPathField.textField as JBTextField).emptyText.text = "IntelliJ IDEA Rsync sozlamasidan (avtomatik)"
+        btnAutoDetectRsync.toolTipText = "IntelliJ IDEA yoki tizimdan rsync.exe ni aniqlash"
         btnAutoDetectRsync.addActionListener {
             val detected = uz.remote.flow.ssh.detectRsyncPath()
             if (detected.isNotBlank()) {
                 rsyncPathField.text = detected
-                Messages.showInfoMessage(project, "Rsync topildi:\n$detected", "Rsync Aniqlash")
+                val idePath = uz.remote.flow.sync.IntelliJRsyncConfigProvider.getRsyncConfig().rsyncPath
+                val origin = if (detected.equals(idePath, ignoreCase = true)) " (IntelliJ IDEA Tools -> Rsync sozlamasidan)" else ""
+                Messages.showInfoMessage(project, "Rsync topildi$origin:\n$detected", "Rsync Aniqlash")
             } else {
                 Messages.showWarningDialog(project, "Tizimdan rsync topilmadi. Qo'lda tanlashingiz mumkin yoki SFTP zaxira ishlatiladi.", "Rsync Topilmadi")
             }
@@ -299,7 +302,21 @@ class ServerProfileEditDialog(
         gbc.gridx = 0; gbc.gridy = 8; gbc.weightx = 0.0; form.add(JBLabel("Rsync Path:"), gbc)
         val rsyncPanel = JPanel(BorderLayout(4, 0))
         rsyncPanel.add(rsyncPathField, BorderLayout.CENTER)
-        rsyncPanel.add(btnAutoDetectRsync, BorderLayout.EAST)
+        val rsyncBtns = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0))
+        rsyncBtns.add(btnAutoDetectRsync)
+        val btnOpenIdeRsync = JButton("⚙ IntelliJ Rsync")
+        btnOpenIdeRsync.toolTipText = "IntelliJ IDEA rasmiy Rsync sozlamalari (Tools -> Rsync)"
+        btnOpenIdeRsync.addActionListener {
+            try {
+                com.intellij.openapi.options.ShowSettingsUtil.getInstance().showSettingsDialog(project, "rsyncConfigurable")
+                val ideCfg = uz.remote.flow.sync.IntelliJRsyncConfigProvider.getRsyncConfig(forceRefresh = true)
+                if (rsyncPathField.text.isBlank() && ideCfg.rsyncPath.isNotBlank()) {
+                    rsyncPathField.text = ideCfg.rsyncPath
+                }
+            } catch (_: Exception) {}
+        }
+        rsyncBtns.add(btnOpenIdeRsync)
+        rsyncPanel.add(rsyncBtns, BorderLayout.EAST)
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(rsyncPanel, gbc)
         gbc.gridwidth = 1
 

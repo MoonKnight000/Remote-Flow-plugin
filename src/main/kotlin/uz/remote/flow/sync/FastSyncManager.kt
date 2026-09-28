@@ -38,32 +38,48 @@ class FastSyncManager(private val project: Project) {
         onLog("[DRY-RUN PREVIEW] Masofadagi server bilan solishtirilmoqda: " + basePath + " -> " + profile.remoteProjectPath + "\n")
 
         parallelPool.submit {
+            var tempAskPass: java.io.File? = null
             try {
                 val exe = resolveRsyncExecutable(profile)
-                val excludes = uz.remote.flow.ssh.parseExcludeList(profile.excludePatterns)
-                val rsyncCmd = mutableListOf(
-                    exe,
-                    "-avzn",
-                    "--delete",
-                    "--itemize-changes"
-                )
-                excludes.forEach { rsyncCmd.add("--exclude=$it") }
+                val rsyncCmd = mutableListOf(exe)
+                val options = buildBaseRsyncOptions(profile)
+                if (!options.contains("--dry-run") && !options.contains("-n")) {
+                    options.add("-n")
+                }
+                if (!options.contains("--delete") && !options.contains("-delete")) {
+                    options.add("--delete")
+                }
+                if (!options.contains("--itemize-changes")) {
+                    options.add("--itemize-changes")
+                }
+                rsyncCmd.addAll(options)
+
                 val rsyncSource = convertToRsyncPath(basePath.trimEnd('/') + "/", exe)
                 val rsyncDest = "${profile.user}@${profile.host}:${profile.remoteProjectPath.trimEnd('/')}/"
 
-                val sshCmd = mutableListOf("ssh", "-p", profile.port.toString(), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null")
-                if (profile.authType == uz.remote.flow.ssh.AuthType.PRIVATE_KEY && profile.privateKeyPath.isNotBlank()) {
-                    val keyPath = convertToRsyncPath(profile.privateKeyPath, exe)
-                    sshCmd.addAll(listOf("-i", keyPath))
+                val sshCmdStr = buildSshCommand(profile, exe)
+                rsyncCmd.addAll(listOf("-e", sshCmdStr, rsyncSource, rsyncDest))
+
+                if (profile.authType == uz.remote.flow.ssh.AuthType.PASSWORD && profile.password.isNotBlank()) {
+                    tempAskPass = java.io.File.createTempFile("rf_askpass_", ".bat")
+                    tempAskPass.writeText("@echo off\r\necho " + profile.password + "\r\n", Charsets.US_ASCII)
+                    tempAskPass.setExecutable(true)
                 }
 
-                rsyncCmd.addAll(listOf(
-                    "-e", sshCmd.joinToString(" "),
-                    rsyncSource,
-                    rsyncDest
-                ))
+                val pb = ProcessBuilder(rsyncCmd).redirectErrorStream(true)
+                val exeFile = java.io.File(exe)
+                if (exeFile.parentFile != null) {
+                    val rsyncDir = exeFile.parentFile.absolutePath
+                    val currentPath = pb.environment()["PATH"] ?: ""
+                    pb.environment()["PATH"] = rsyncDir + java.io.File.pathSeparator + currentPath
+                }
+                if (tempAskPass != null) {
+                    pb.environment()["SSH_ASKPASS"] = tempAskPass.absolutePath
+                    pb.environment()["SSH_ASKPASS_REQUIRE"] = "force"
+                    pb.environment()["DISPLAY"] = "dummy:0"
+                }
 
-                val process = ProcessBuilder(rsyncCmd).redirectErrorStream(true).start()
+                val process = pb.start()
                 process.inputStream.bufferedReader().useLines { lines ->
                     lines.forEach { onLog(it + "\n") }
                 }
@@ -72,6 +88,8 @@ class FastSyncManager(private val project: Project) {
             } catch (e: Exception) {
                 onLog("[DRY-RUN NOTE]: Rsync topilmadi yoki xato berdi (" + e.message + "). SSH orqali tekshirilmoqda.\n")
                 onComplete(false)
+            } finally {
+                try { tempAskPass?.delete() } catch (_: Exception) {}
             }
         }
     }
@@ -231,22 +249,22 @@ class FastSyncManager(private val project: Project) {
                 val exe = resolveRsyncExecutable(profile)
                 if (checkRsync(profile)) {
                     val rsyncSource = convertToRsyncPath(localFile.absolutePath, exe)
-                    val sshCmd = mutableListOf("ssh", "-p", profile.port.toString(), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null")
-                    if (profile.authType == uz.remote.flow.ssh.AuthType.PRIVATE_KEY && profile.privateKeyPath.isNotBlank()) {
-                        val keyPath = convertToRsyncPath(profile.privateKeyPath, exe)
-                        sshCmd.addAll(listOf("-i", keyPath))
-                    } else if (profile.authType == uz.remote.flow.ssh.AuthType.PASSWORD && profile.password.isNotBlank()) {
-                        tempAskPass = java.io.File.createTempFile("rf_askpass_", ".bat")
-                        tempAskPass.writeText("@echo off\r\necho " + profile.password + "\r\n")
-                        tempAskPass.setExecutable(true)
-                    }
+                    val sshCmdStr = buildSshCommand(profile, exe)
                     val rsyncCmd = listOf(
                         exe,
                         "-avz",
-                        "-e", sshCmd.joinToString(" "),
+                        "--no-perms",
+                        "--no-owner",
+                        "--no-group",
+                        "-e", sshCmdStr,
                         rsyncSource,
                         profile.user + "@" + profile.host + ":" + remoteTarget
                     )
+                    if (profile.authType == uz.remote.flow.ssh.AuthType.PASSWORD && profile.password.isNotBlank()) {
+                        tempAskPass = java.io.File.createTempFile("rf_askpass_", ".bat")
+                        tempAskPass.writeText("@echo off\r\necho " + profile.password + "\r\n", Charsets.US_ASCII)
+                        tempAskPass.setExecutable(true)
+                    }
                     val pb = ProcessBuilder(rsyncCmd).redirectErrorStream(true)
                     val exeFile = java.io.File(exe)
                     if (exeFile.parentFile != null) {
@@ -382,8 +400,70 @@ class FastSyncManager(private val project: Project) {
             val f = java.io.File(profile.rsyncPath)
             if (f.exists() && f.canExecute()) return f.absolutePath
         }
+        val ideRsync = IntelliJRsyncConfigProvider.getRsyncConfig().rsyncPath
+        if (ideRsync.isNotBlank()) {
+            val f = java.io.File(ideRsync)
+            if (f.exists() && f.canExecute()) return f.absolutePath
+        }
         val detected = uz.remote.flow.ssh.detectRsyncPath()
         return detected.ifBlank { "rsync" }
+    }
+
+    fun resolveShellExecutable(rsyncExe: String): String {
+        val ideShell = IntelliJRsyncConfigProvider.getRsyncConfig().shellPath
+        if (ideShell.isNotBlank()) {
+            val f = java.io.File(ideShell)
+            if (f.exists() && f.canExecute()) return f.absolutePath
+        }
+        val rsyncFile = java.io.File(rsyncExe)
+        if (rsyncFile.parentFile != null) {
+            val isWin = com.intellij.openapi.util.SystemInfo.isWindows
+            val candidate = java.io.File(rsyncFile.parentFile, if (isWin) "ssh.exe" else "ssh")
+            if (candidate.exists() && candidate.canExecute()) return candidate.absolutePath
+        }
+        return "ssh"
+    }
+
+    fun buildBaseRsyncOptions(profile: ServerProfile): MutableList<String> {
+        val optionsList = mutableListOf<String>()
+        val ideConfig = IntelliJRsyncConfigProvider.getRsyncConfig()
+        val ideOptsStr = ideConfig.options.trim()
+        if (ideOptsStr.isNotBlank()) {
+            try {
+                optionsList.addAll(com.intellij.util.execution.ParametersListUtil.parse(ideOptsStr))
+            } catch (_: Throwable) {
+                optionsList.addAll(ideOptsStr.split("\\s+".toRegex()).filter { it.isNotBlank() })
+            }
+        }
+        if (optionsList.none { it.startsWith("-a") || it.startsWith("-r") || it.startsWith("-z") }) {
+            optionsList.add("-avz")
+        }
+        val excludes = uz.remote.flow.ssh.parseExcludeList(profile.excludePatterns)
+        for (exc in excludes) {
+            val opt = "--exclude=$exc"
+            if (!optionsList.contains(opt)) {
+                optionsList.add(opt)
+            }
+        }
+        if (!optionsList.contains("--no-perms")) optionsList.add("--no-perms")
+        if (!optionsList.contains("--no-owner")) optionsList.add("--no-owner")
+        if (!optionsList.contains("--no-group")) optionsList.add("--no-group")
+        return optionsList
+    }
+
+    fun buildSshCommand(profile: ServerProfile, rsyncExe: String): String {
+        val shellExe = resolveShellExecutable(rsyncExe).replace('\\', '/')
+        val args = mutableListOf(
+            shellExe,
+            "-p", profile.port.toString(),
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null"
+        )
+        if (profile.authType == uz.remote.flow.ssh.AuthType.PRIVATE_KEY && profile.privateKeyPath.isNotBlank()) {
+            val keyPath = convertToRsyncPath(profile.privateKeyPath, rsyncExe)
+            args.addAll(listOf("-i", keyPath))
+        }
+        return args.joinToString(" ")
     }
 
     fun checkRsync(profile: ServerProfile = connectionManager.config.activeProfile): Boolean {
@@ -401,29 +481,29 @@ class FastSyncManager(private val project: Project) {
             var tempAskPass: java.io.File? = null
             try {
                 val exe = resolveRsyncExecutable(profile)
-                onLog("[RSYNC SYNC -> " + profile.name + "] Rsync topildi ($exe). Tezkor sinxronizatsiya boshlandi...\n")
-                val excludes = uz.remote.flow.ssh.parseExcludeList(profile.excludePatterns)
-                val rsyncCmd = mutableListOf(exe, "-avz", "--delete")
-                excludes.forEach { rsyncCmd.add("--exclude=$it") }
+                val ideConfig = IntelliJRsyncConfigProvider.getRsyncConfig()
+                val isIdeRsync = exe.equals(ideConfig.rsyncPath, ignoreCase = true)
+                val origin = if (isIdeRsync) "IntelliJ IDEA Rsync sozlamalari orqali ($exe)" else exe
+                onLog("[RSYNC SYNC -> " + profile.name + "] Rsync topildi: $origin. Tezkor sinxronizatsiya boshlandi...\n")
+
+                val rsyncCmd = mutableListOf(exe)
+                val options = buildBaseRsyncOptions(profile)
+                if (!options.contains("--delete") && !options.contains("-delete")) {
+                    options.add("--delete")
+                }
+                rsyncCmd.addAll(options)
 
                 val rsyncSource = convertToRsyncPath(localDir.trimEnd('/') + "/", exe)
                 val rsyncDest = "${profile.user}@${profile.host}:${profile.remoteProjectPath.trimEnd('/')}/"
 
-                val sshCmd = mutableListOf("ssh", "-p", profile.port.toString(), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null")
-                if (profile.authType == uz.remote.flow.ssh.AuthType.PRIVATE_KEY && profile.privateKeyPath.isNotBlank()) {
-                    val keyPath = convertToRsyncPath(profile.privateKeyPath, exe)
-                    sshCmd.addAll(listOf("-i", keyPath))
-                } else if (profile.authType == uz.remote.flow.ssh.AuthType.PASSWORD && profile.password.isNotBlank()) {
+                val sshCmdStr = buildSshCommand(profile, exe)
+                rsyncCmd.addAll(listOf("-e", sshCmdStr, rsyncSource, rsyncDest))
+
+                if (profile.authType == uz.remote.flow.ssh.AuthType.PASSWORD && profile.password.isNotBlank()) {
                     tempAskPass = java.io.File.createTempFile("rf_askpass_", ".bat")
-                    tempAskPass.writeText("@echo off\r\necho " + profile.password + "\r\n")
+                    tempAskPass.writeText("@echo off\r\necho " + profile.password + "\r\n", Charsets.US_ASCII)
                     tempAskPass.setExecutable(true)
                 }
-
-                rsyncCmd.addAll(listOf(
-                    "-e", sshCmd.joinToString(" "),
-                    rsyncSource,
-                    rsyncDest
-                ))
 
                 onLog("[RSYNC EXEC] $rsyncSource -> $rsyncDest\n")
                 val pb = ProcessBuilder(rsyncCmd).redirectErrorStream(true)

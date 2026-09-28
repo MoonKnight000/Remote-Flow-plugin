@@ -118,6 +118,18 @@ fun isPathExcluded(relativePath: String, fileName: String, excludePatterns: List
 }
 
 fun detectRsyncPath(): String {
+    // 1. IntelliJ IDEA native Rsync configuration
+    try {
+        val ideRsync = uz.remote.flow.sync.IntelliJRsyncConfigProvider.getRsyncConfig().rsyncPath
+        if (ideRsync.isNotBlank()) {
+            val f = java.io.File(ideRsync)
+            if (f.exists() && f.canExecute()) {
+                return f.absolutePath
+            }
+        }
+    } catch (_: Throwable) {}
+
+    // 2. Rsync on system PATH
     try {
         val p = ProcessBuilder("rsync", "--version").start()
         if (p.waitFor() == 0) return "rsync"
