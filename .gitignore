@@ -1,0 +1,30 @@
+# Gradle
+.gradle/
+build/
+
+# Kotlin
+.kotlin/
+
+# IntelliJ Platform Plugin artifacts & cache
+.intellijPlatform/
+
+# IntelliJ IDEA
+.idea/**/workspace.xml
+.idea/**/tasks.xml
+.idea/**/usage.statistics.xml
+.idea/**/shelf
+.idea/**/contentModel.xml
+.idea/**/deployment.xml
+.idea/**/dataSources/
+.idea/**/dataSources.local.xml
+*.iws
+*.iml
+*.ipr
+out/
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log

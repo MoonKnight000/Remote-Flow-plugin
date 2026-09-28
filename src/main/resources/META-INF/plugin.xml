@@ -1,0 +1,100 @@
+<idea-plugin>
+    <id>uz.remote.flow</id>
+    <name>Remote Flow</name>
+    <vendor email="murodjon@dev.local" url="https://github.com/murodjon">Murodjon</vendor>
+
+    <description><![CDATA[
+    <b>Remote Flow</b> — Developed by Murodjon.<br/>
+    Lightweight Remote Server Runner, Differential Sync, Docker Compose Manager, and JetBrains Gateway-style Port Forwarding & Hardware Resource Monitor (CPU, RAM, Disk, Redis, RabbitMQ, PostgreSQL, JVM Debug).
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <projectConfigurable parentId="tools"
+                             id="uz.remote.flow.settings.RemoteFlowConfigurable"
+                             displayName="Remote Flow"
+                             instance="uz.remote.flow.settings.RemoteFlowConfigurable"/>
+
+        <statusBarWidgetFactory id="RemoteFlowStatusBar"
+                                implementation="uz.remote.flow.ui.RemoteFlowStatusBarWidgetFactory"
+                                order="last"/>
+
+        <toolWindow id="RemoteFlow"
+                    icon="icons/remoteFlow.svg"
+                    secondary="true"
+                    anchor="right"
+                    factoryClass="uz.remote.flow.ui.RemoteFlowToolWindowFactory"/>
+    </extensions>
+
+    <actions>
+        <!-- Group in Tools Menu -->
+        <group id="RemoteFlow.ToolsGroup" text="Remote Flow" description="Remote Flow operations" popup="true" icon="icons/remoteFlow.svg">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <action id="RemoteFlow.ConnectAction"
+                    class="uz.remote.flow.actions.RemoteFlowConnectAction"
+                    text="Connect / Disconnect Server"
+                    description="Connect or disconnect active remote server"/>
+            <action id="RemoteFlow.SyncAction"
+                    class="uz.remote.flow.actions.RemoteFlowSyncAction"
+                    text="Fast Sync Project to Server"
+                    description="Sync all project changes to active remote server"/>
+            <action id="RemoteFlow.RunAction"
+                    class="uz.remote.flow.actions.RemoteFlowRunAction"
+                    text="Run on Remote Server"
+                    description="Build and run application on remote server"/>
+            <action id="RemoteFlow.DebugAction"
+                    class="uz.remote.flow.actions.RemoteFlowDebugAction"
+                    text="Debug on Remote Server"
+                    description="Run application on remote server in JVM debug mode"/>
+            <action id="RemoteFlow.TerminalAction"
+                    class="uz.remote.flow.actions.RemoteFlowTerminalAction"
+                    text="Open Remote SSH Terminal"
+                    description="Open interactive terminal session with active server"/>
+            <separator/>
+            <action id="RemoteFlow.DockerUpAction"
+                    class="uz.remote.flow.actions.RemoteFlowDockerUpAction"
+                    text="Docker Compose Up (-d --build)"
+                    description="Run docker compose up on remote server"/>
+            <action id="RemoteFlow.DockerDownAction"
+                    class="uz.remote.flow.actions.RemoteFlowDockerDownAction"
+                    text="Docker Compose Down"
+                    description="Run docker compose down on remote server"/>
+            <separator/>
+            <action id="RemoteFlow.OpenSettingsAction"
+                    class="uz.remote.flow.actions.RemoteFlowOpenSettingsAction"
+                    text="Remote Flow Settings..."
+                    description="Configure servers, ports and sync settings"/>
+        </group>
+
+        <!-- Context menu in Project View -->
+        <group id="RemoteFlow.ProjectViewGroup" text="Remote Flow" popup="true" icon="icons/remoteFlow.svg">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="after" relative-to-action="CutCopyPasteGroup"/>
+            <action id="RemoteFlow.SyncSelectionAction"
+                    class="uz.remote.flow.actions.RemoteFlowSyncSelectionAction"
+                    text="Sync Selected to Remote"
+                    description="Sync selected file or folder to remote server"/>
+            <action id="RemoteFlow.ProjectViewTerminalAction"
+                    class="uz.remote.flow.actions.RemoteFlowTerminalAction"
+                    text="Open Remote Terminal"
+                    description="Open terminal session to active server"/>
+        </group>
+
+        <!-- Context menu in Editor -->
+        <group id="RemoteFlow.EditorGroup" text="Remote Flow" popup="true" icon="icons/remoteFlow.svg">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <action id="RemoteFlow.EditorSyncAction"
+                    class="uz.remote.flow.actions.RemoteFlowSyncSelectionAction"
+                    text="Sync Current File to Remote"
+                    description="Sync current active file to remote server"/>
+            <action id="RemoteFlow.EditorRunAction"
+                    class="uz.remote.flow.actions.RemoteFlowRunAction"
+                    text="Run on Remote Server"
+                    description="Build and run application on remote server"/>
+            <action id="RemoteFlow.EditorDebugAction"
+                    class="uz.remote.flow.actions.RemoteFlowDebugAction"
+                    text="Debug on Remote Server"
+                    description="Run application in debug mode on remote server"/>
+        </group>
+    </actions>
+</idea-plugin>
