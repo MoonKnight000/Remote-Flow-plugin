@@ -12,11 +12,17 @@ enum class SyncMode {
     AUTO_INTERVAL
 }
 
+enum class ForwardDirection {
+    LOCAL_TO_REMOTE, // Local -> Host (ssh -L)
+    REMOTE_TO_LOCAL  // Host -> Local (ssh -R)
+}
+
 data class PortMapping(
     var localPort: Int = 8080,
     var remotePort: Int = 8080,
     var serviceName: String = "Service",
-    var isForwarded: Boolean = false
+    var isForwarded: Boolean = false,
+    var direction: ForwardDirection = ForwardDirection.LOCAL_TO_REMOTE
 )
 
 data class ServerProfile(

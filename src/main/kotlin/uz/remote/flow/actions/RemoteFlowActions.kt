@@ -6,7 +6,6 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.wm.ToolWindowManager
-import uz.remote.flow.docker.DockerComposeManager
 import uz.remote.flow.settings.RemoteFlowConfigurable
 import uz.remote.flow.settings.RemoteFlowSettings
 import uz.remote.flow.ssh.RemoteConnectionManager
@@ -147,8 +146,10 @@ class RemoteFlowRunAction : AnAction("Run on Remote Server", "Masofaviy serverda
                 profile = p,
                 onLog = {},
                 onComplete = {
+                    val rawCmd = p.runCommand
+                    val runCmd = "sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
                     connMgr.executeRemoteCommand(
-                        cmd = p.runCommand,
+                        cmd = runCmd,
                         workingDir = p.remoteProjectPath,
                         onOutput = {},
                         onComplete = { code ->
@@ -181,8 +182,10 @@ class RemoteFlowDebugAction : AnAction("Debug on Remote Server", "Masofaviy serv
                 profile = p,
                 onLog = {},
                 onComplete = {
+                    val rawCmd = p.debugCommand
+                    val debugCmd = "sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
                     connMgr.executeRemoteCommand(
-                        cmd = p.debugCommand,
+                        cmd = debugCmd,
                         workingDir = p.remoteProjectPath,
                         onOutput = {},
                         onComplete = { code ->
@@ -202,45 +205,6 @@ class RemoteFlowTerminalAction : AnAction("Open Remote Terminal", "Masofaviy ser
         val settings = RemoteFlowSettings.getInstance(project)
         val p = settings.activeProfileOrNull ?: return
         uz.remote.flow.terminal.RemoteTerminalHelper.openTerminal(project, p)
-    }
-}
-
-class RemoteFlowDockerUpAction : AnAction("Docker Compose Up", "Serverda docker compose up -d --build", RemoteFlowIcons.REMOTE_FLOW) {
-    override fun actionPerformed(e: AnActionEvent) {
-        val project = e.project ?: return
-        val connMgr = RemoteConnectionManager.getInstance(project)
-        if (!connMgr.isConnected) {
-            connMgr.notifyUser("Remote Flow", "Serverga ulanilmagan! Avval ulaning.", NotificationType.WARNING)
-            return
-        }
-        val dockerMgr = DockerComposeManager(project)
-        connMgr.notifyUser("Remote Flow", "Docker Compose ishga tushirilmoqda...")
-        dockerMgr.composeUp(
-            build = true,
-            onOutput = {},
-            onComplete = { code ->
-                connMgr.notifyUser("Remote Flow", "Docker Compose Up yakunlandi (Exit code: $code)")
-            }
-        )
-    }
-}
-
-class RemoteFlowDockerDownAction : AnAction("Docker Compose Down", "Serverda docker compose down", RemoteFlowIcons.REMOTE_FLOW) {
-    override fun actionPerformed(e: AnActionEvent) {
-        val project = e.project ?: return
-        val connMgr = RemoteConnectionManager.getInstance(project)
-        if (!connMgr.isConnected) {
-            connMgr.notifyUser("Remote Flow", "Serverga ulanilmagan! Avval ulaning.", NotificationType.WARNING)
-            return
-        }
-        val dockerMgr = DockerComposeManager(project)
-        connMgr.notifyUser("Remote Flow", "Docker Compose to'xtatilmoqda...")
-        dockerMgr.composeDown(
-            onOutput = {},
-            onComplete = { code ->
-                connMgr.notifyUser("Remote Flow", "Docker Compose Down yakunlandi (Exit code: $code)")
-            }
-        )
     }
 }
 

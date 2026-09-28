@@ -8,7 +8,9 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.IdeBorderFactory
@@ -22,10 +24,10 @@ import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.table.JBTable
 import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.ui.JBUI
-import uz.remote.flow.docker.DockerComposeManager
 import uz.remote.flow.settings.RemoteFlowConfigurable
 import uz.remote.flow.settings.RemoteFlowSettings
 import uz.remote.flow.settings.ServerProfileEditDialog
+import uz.remote.flow.ssh.ForwardDirection
 import uz.remote.flow.ssh.PortMapping
 import uz.remote.flow.ssh.RemoteConnectionListener
 import uz.remote.flow.ssh.RemoteConnectionManager
@@ -33,6 +35,8 @@ import uz.remote.flow.ssh.ServerProfile
 import uz.remote.flow.sync.FastSyncManager
 import uz.remote.flow.system.ServerStatsManager
 import java.awt.*
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.awt.datatransfer.StringSelection
 import java.net.HttpURLConnection
 import java.net.URI
@@ -55,7 +59,6 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
     private val settings = RemoteFlowSettings.getInstance(project)
     private val connectionManager = RemoteConnectionManager.getInstance(project)
-    private val dockerManager = DockerComposeManager(project)
     private val syncManager = FastSyncManager(project)
     private val statsManager = ServerStatsManager(project)
 
@@ -79,8 +82,8 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
     // Remote Git Status Labels
     private val lblGitBranch = JLabel("🌿 Branch: -")
-    private val lblGitCommit = JLabel("📌 Commit: -")
-    private val lblGitStatus = JLabel("Status: -")
+    private val lblGitCommit = JLabel("")
+    private val lblGitStatus = JLabel("")
 
     // Remote Files Explorer Panel & Unified Logger
     val filesPanel = RemoteFileExplorerPanel(project)
@@ -101,7 +104,6 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     private val ramLabel = JLabel("0 GB / 0 GB (0%)")
     private val diskBar = JProgressBar(0, 100)
     private val diskLabel = JLabel("0 GB / 0 GB (0%)")
-    private val dockerStatsArea = JTextArea("Resurs ma'lumotlarini olish uchun 'Refresh' tugmasini bosing.")
 
     // Hardware Resource Monitor Controls
     private val monitorModeBox = JComboBox(arrayOf("⚡ Real-time (3s)", "⏱ Real-time (5s)", "🔍 Manual (On demand)", "🚫 Off (Disabled)"))
@@ -119,8 +121,6 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     // Tables
     private lateinit var portsTableModel: DefaultTableModel
     private lateinit var portsTable: JBTable
-    private lateinit var dockerTableModel: DefaultTableModel
-    private lateinit var dockerTable: JBTable
 
     init {
         border = JBUI.Borders.empty(4)
@@ -128,12 +128,11 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         // Setup Header Control Bar
         add(createHeaderPanel(), BorderLayout.NORTH)
 
-        // 6 Logical Tabs
+        // 5 Logical Tabs
         tabbedPane.addTab("📊 Dashboard", createDashboardTab())
         tabbedPane.addTab("📁 Files", filesPanel)
         tabbedPane.addTab("🚀 Run & Debug", createRunDebugTab())
-        tabbedPane.addTab("🐳 Docker", createDockerTab())
-        tabbedPane.addTab("🔌 Ports & Database", createPortsAndDbTab())
+        tabbedPane.addTab("🔌 Port Forwarding", createPortsTab())
         tabbedPane.addTab("💻 Terminal", createTerminalTab())
 
         add(tabbedPane, BorderLayout.CENTER)
@@ -374,8 +373,8 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
             statusText.text = "Disconnected"
             statusText.foreground = JBColor.foreground()
             lblGitBranch.text = "🌿 Branch: -"
-            lblGitCommit.text = "📌 Commit: -"
-            lblGitStatus.text = "Status: -"
+            lblGitCommit.text = ""
+            lblGitStatus.text = ""
         }
         updatePortsTableData()
         restartMonitorScheduler()
@@ -449,9 +448,12 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         top.add(metersCard)
         top.add(Box.createVerticalStrut(6))
 
-        // Quick Actions Row
-        val quickActionCard = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
-        quickActionCard.border = IdeBorderFactory.createTitledBorder("Quick Operations", false)
+        // Quick Actions Grid (2 rows x 3 columns)
+        val quickActionCard = JPanel(GridLayout(0, 3, 6, 6))
+        quickActionCard.border = BorderFactory.createCompoundBorder(
+            IdeBorderFactory.createTitledBorder("Quick Operations", false),
+            JBUI.Borders.empty(4, 6, 6, 6)
+        )
 
         val btnBrowseFiles = JButton("📁 Browse Remote Files")
         btnBrowseFiles.toolTipText = "Serverdagi loyiha papkasi (remoteProjectPath) fayllarini ko'rish"
@@ -461,21 +463,24 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         }
         quickActionCard.add(btnBrowseFiles)
 
-        val btnDryRun = JButton("🔍 Preview / Dry-Run (Diff)")
+        val btnDryRun = JButton("🔍 Preview / Diff")
+        btnDryRun.toolTipText = "Masofadagi server bilan solishtirish (Dry-Run Diff)"
         btnDryRun.addActionListener {
             syncManager.previewDryRun(settings.activeProfile, { log(it) }, {})
         }
         quickActionCard.add(btnDryRun)
 
         val btnSyncAll = JButton("🌐 Sync ALL Servers")
+        btnSyncAll.toolTipText = "Barcha serverlarga parallel sinxronizatsiya qilish"
         btnSyncAll.addActionListener { syncAllServers() }
         quickActionCard.add(btnSyncAll)
 
-        val btnPrune = JButton("🧹 Rescue Disk Space (Docker Prune)")
-        btnPrune.addActionListener { rescueDiskSpace() }
-        quickActionCard.add(btnPrune)
+        val btnPortForwarding = JButton("🔌 Port Tunnels")
+        btnPortForwarding.toolTipText = "Masofaviy va lokal port forward tunnellarini boshqarish"
+        btnPortForwarding.addActionListener { selectTab("Port") }
+        quickActionCard.add(btnPortForwarding)
 
-        val btnOpenTerminalQuick = JButton("💻 Open SSH Terminal")
+        val btnOpenTerminalQuick = JButton("💻 SSH Terminal")
         btnOpenTerminalQuick.toolTipText = "IntelliJ IDEA Terminalida serverga SSH bilan ulanish"
         btnOpenTerminalQuick.addActionListener {
             val p = settings.activeProfileOrNull ?: return@addActionListener
@@ -483,7 +488,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         }
         quickActionCard.add(btnOpenTerminalQuick)
 
-        val btnRemoteConfigs = JButton("⚙ Remote Configs (.env / .yml)")
+        val btnRemoteConfigs = JButton("⚙ Remote Configs")
         btnRemoteConfigs.toolTipText = "Masofaviy .env va application.yml sozlamalarini boshqarish"
         btnRemoteConfigs.addActionListener { openRemoteConfigManager() }
         quickActionCard.add(btnRemoteConfigs)
@@ -493,15 +498,9 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         top.add(createGitStatusCard())
         top.add(Box.createVerticalStrut(6))
 
-        // Docker Breakdown Console
-        val dockerPanel = JPanel(BorderLayout(0, 4))
-        dockerPanel.border = IdeBorderFactory.createTitledBorder("Docker Containers Resource Breakdown", false)
-        dockerStatsArea.font = Font("Monospaced", Font.PLAIN, 12)
-        dockerStatsArea.isEditable = false
-        dockerPanel.add(JBScrollPane(dockerStatsArea), BorderLayout.CENTER)
-
-        root.add(top, BorderLayout.NORTH)
-        root.add(dockerPanel, BorderLayout.CENTER)
+        val scrollPane = JBScrollPane(top)
+        scrollPane.border = null
+        root.add(scrollPane, BorderLayout.CENTER)
         return root
     }
 
@@ -622,137 +621,164 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         return panel
     }
 
-    // TAB 3: Docker
-    private fun createDockerTab(): JPanel {
-        val panel = JPanel(BorderLayout(0, 6))
-        panel.border = JBUI.Borders.empty(6)
-
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2))
-        toolbar.border = IdeBorderFactory.createTitledBorder("Docker Compose Control", false)
-
-        val btnUp = JButton("🚀 Compose Up (-d --build)")
-        btnUp.addActionListener { dockerUp() }
-        toolbar.add(btnUp)
-
-        val btnDown = JButton("🛑 Compose Down")
-        btnDown.addActionListener { dockerDown() }
-        toolbar.add(btnDown)
-
-        val btnPrune = JButton("🧹 Rescue Disk Space")
-        btnPrune.addActionListener { rescueDiskSpace() }
-        toolbar.add(btnPrune)
-
-        val btnRefresh = JButton("⟳ Refresh")
-        btnRefresh.addActionListener { refreshDockerContainers() }
-        toolbar.add(btnRefresh)
-
-        val cols = arrayOf("Container Name", "Image", "Status", "Ports")
-        dockerTableModel = object : DefaultTableModel(cols, 0) {
-            override fun isCellEditable(row: Int, column: Int): Boolean = false
-        }
-        dockerTable = JBTable(dockerTableModel)
-        dockerTable.rowHeight = 26
-
-        val actionRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2))
-        actionRow.border = IdeBorderFactory.createTitledBorder("Selected Container Actions", false)
-
-        val btnRestartC = JButton("🔄 Restart")
-        btnRestartC.addActionListener {
-            val name = getSelectedContainerName() ?: return@addActionListener
-            log("[DOCKER] Restarting container: $name...\n")
-            dockerManager.restartContainer(name, { log(it) }, { refreshDockerContainers() })
-        }
-        actionRow.add(btnRestartC)
-
-        val btnStopC = JButton("🛑 Stop")
-        btnStopC.addActionListener {
-            val name = getSelectedContainerName() ?: return@addActionListener
-            log("[DOCKER] Stopping container: $name...\n")
-            dockerManager.stopContainer(name, { log(it) }, { refreshDockerContainers() })
-        }
-        actionRow.add(btnStopC)
-
-        val btnStartC = JButton("▶ Start")
-        btnStartC.addActionListener {
-            val name = getSelectedContainerName() ?: return@addActionListener
-            log("[DOCKER] Starting container: $name...\n")
-            dockerManager.startContainer(name, { log(it) }, { refreshDockerContainers() })
-        }
-        actionRow.add(btnStartC)
-
-        val btnLogsC = JButton("📜 Logs")
-        btnLogsC.addActionListener {
-            val name = getSelectedContainerName() ?: return@addActionListener
-            log("[DOCKER] Streaming logs for $name...\n")
-            dockerManager.streamLogs(name, { log(it) }, {})
-        }
-        actionRow.add(btnLogsC)
-
-        panel.add(toolbar, BorderLayout.NORTH)
-        panel.add(JBScrollPane(dockerTable), BorderLayout.CENTER)
-        panel.add(actionRow, BorderLayout.SOUTH)
-        return panel
-    }
-
-    // TAB 4: Ports & Database
-    private fun createPortsAndDbTab(): JPanel {
+    // TAB 4: Port Forwarding
+    private fun createPortsTab(): JPanel {
         val panel = JPanel(BorderLayout(0, 8))
         panel.border = JBUI.Borders.empty(6)
 
-        // Database Card
-        val dbCard = JPanel(GridBagLayout())
-        dbCard.border = IdeBorderFactory.createTitledBorder("IntelliJ Database Explorer (PostgreSQL 5432 Tunnel)", false)
-        val gbc = GridBagConstraints()
-        gbc.insets = JBUI.insets(3, 4, 3, 4)
-        gbc.anchor = GridBagConstraints.WEST
-        gbc.fill = GridBagConstraints.HORIZONTAL
-
-        val jdbcUrlField = JBTextField("jdbc:postgresql://localhost:5432/home_sale_db")
-        jdbcUrlField.isEditable = false
-
-        gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.0; dbCard.add(JBLabel("JDBC URL:"), gbc)
-        gbc.gridx = 1; gbc.weightx = 1.0; dbCard.add(jdbcUrlField, gbc)
-
-        val btnCopyJdbc = JButton("📋 Copy JDBC URL")
-        btnCopyJdbc.addActionListener {
-            val sel = StringSelection(jdbcUrlField.text)
-            Toolkit.getDefaultToolkit().systemClipboard.setContents(sel, sel)
-            Messages.showInfoMessage(project, "JDBC URL buferga nusxalandi!", "Nusxalandi")
-        }
-        gbc.gridx = 2; gbc.weightx = 0.0; dbCard.add(btnCopyJdbc, gbc)
-
-        val btnTestDb = JButton("⚡ Test Database Connection via Remote Query")
-        btnTestDb.addActionListener {
-            log("[DATABASE TEST] PostgreSQL holati tekshirilmoqda...\n")
-            connectionManager.executeRemoteCommand(
-                cmd = "docker exec -i \$(docker ps -qf 'name=postgres' | head -n1) psql -U postgres -d home_sale_db -c 'SELECT current_database(), version();' 2>/dev/null || psql -U postgres -c 'SELECT current_database();' 2>/dev/null",
-                onOutput = { log(it) },
-                onComplete = { log("[DATABASE TEST COMPLETED]\n") }
-            )
-        }
-        gbc.gridx = 0; gbc.gridy = 1; gbc.gridwidth = 3; gbc.weightx = 1.0
-        dbCard.add(btnTestDb, gbc)
-        gbc.gridwidth = 1
-
-        // Forwarded Ports Table
+        // 1. TOP & MAIN: Forwarded Ports Box
         val portsBox = JPanel(BorderLayout(0, 6))
-        portsBox.border = IdeBorderFactory.createTitledBorder("Forwarded Ports Management", false)
+        portsBox.border = BorderFactory.createCompoundBorder(
+            IdeBorderFactory.createTitledBorder("Forwarded Ports Management (Bi-directional SSH Tunnels)", false),
+            JBUI.Borders.empty(4, 6, 6, 6)
+        )
 
-        val portHeader = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
+        val portHeader = JPanel(BorderLayout(6, 0))
+        val portHeaderLeft = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
+        val lblTunnelsSummary = JBLabel("SSH Tunnels (Local ⇄ Host)")
+        lblTunnelsSummary.font = lblTunnelsSummary.font.deriveFont(Font.BOLD, 12f)
+        portHeaderLeft.add(lblTunnelsSummary)
+
+        val portHeaderRight = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
         val btnAddPort = JButton("➕ Forward New Port...")
+        btnAddPort.toolTipText = "Yangi port forward qo'shish (Local -> Host yoki Host -> Local)"
         btnAddPort.addActionListener { showAddPortDialog() }
-        portHeader.add(btnAddPort)
+        portHeaderRight.add(btnAddPort)
+
+        val btnRestartTunnels = JButton("🔄 Restart Tunnels")
+        btnRestartTunnels.toolTipText = "Barcha faol port forward tunnellarini qayta ishga tushirish"
+        btnRestartTunnels.addActionListener { restartTunnels() }
+        portHeaderRight.add(btnRestartTunnels)
+
+        val btnDeletePort = JButton("🗑 Remove Selected")
+        btnDeletePort.toolTipText = "Tanlangan port forwardini ro'yxatdan o'chirish"
+        btnDeletePort.addActionListener { removeSelectedPort() }
+        portHeaderRight.add(btnDeletePort)
+
+        portHeader.add(portHeaderLeft, BorderLayout.WEST)
+        portHeader.add(portHeaderRight, BorderLayout.EAST)
         portsBox.add(portHeader, BorderLayout.NORTH)
 
-        val columns = arrayOf("Status", "Service Name", "Local Address", "Remote Port", "Open / Action")
+        val columns = arrayOf("Status", "Direction", "Service Name", "Local Endpoint", "Remote Endpoint", "Target / Action")
         portsTableModel = object : DefaultTableModel(columns, 0) {
             override fun isCellEditable(row: Int, column: Int): Boolean = false
         }
         portsTable = JBTable(portsTableModel)
-        portsTable.rowHeight = 26
+        portsTable.rowHeight = 28
+        portsTable.columnModel.getColumn(0).preferredWidth = 85
+        portsTable.columnModel.getColumn(1).preferredWidth = 150
+        portsTable.columnModel.getColumn(2).preferredWidth = 150
+        portsTable.columnModel.getColumn(3).preferredWidth = 120
+        portsTable.columnModel.getColumn(4).preferredWidth = 120
+        portsTable.columnModel.getColumn(5).preferredWidth = 160
+
+        // Custom Cell Renderers for Status & Direction
+        portsTable.columnModel.getColumn(0).cellRenderer = object : javax.swing.table.DefaultTableCellRenderer() {
+            override fun getTableCellRendererComponent(
+                table: JTable?, value: Any?, isSelected: Boolean, hasFocus: Boolean, row: Int, column: Int
+            ): Component {
+                val c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column) as JLabel
+                val str = value?.toString() ?: ""
+                if (!isSelected) {
+                    if (str.contains("Active") || str.contains("Forwarded")) {
+                        c.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
+                    } else {
+                        c.foreground = JBColor.GRAY
+                    }
+                }
+                c.font = c.font.deriveFont(Font.BOLD)
+                return c
+            }
+        }
+
+        portsTable.columnModel.getColumn(1).cellRenderer = object : javax.swing.table.DefaultTableCellRenderer() {
+            override fun getTableCellRendererComponent(
+                table: JTable?, value: Any?, isSelected: Boolean, hasFocus: Boolean, row: Int, column: Int
+            ): Component {
+                val c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column) as JLabel
+                val str = value?.toString() ?: ""
+                if (!isSelected) {
+                    if (str.contains("Host ➔ 💻 Local")) {
+                        c.foreground = JBColor(Color(147, 51, 234), Color(192, 132, 252))
+                    } else {
+                        c.foreground = JBColor(Color(2, 132, 199), Color(56, 189, 248))
+                    }
+                }
+                c.font = c.font.deriveFont(Font.BOLD)
+                return c
+            }
+        }
+
+        // Double click to open web or copy
+        portsTable.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                if (e.clickCount == 2) {
+                    val row = portsTable.selectedRow
+                    val profile = settings.activeProfileOrNull ?: return
+                    if (row in profile.forwardedPorts.indices) {
+                        val p = profile.forwardedPorts[row]
+                        val port = if (p.direction == ForwardDirection.LOCAL_TO_REMOTE) p.localPort else p.remotePort
+                        if (port in listOf(80, 443, 8080, 8000, 3000, 5173, 15672, 9000, 8081)) {
+                            try {
+                                Desktop.getDesktop().browse(URI("http://localhost:$port"))
+                            } catch (_: Exception) {}
+                        } else {
+                            val sel = StringSelection("localhost:$port")
+                            Toolkit.getDefaultToolkit().systemClipboard.setContents(sel, sel)
+                            connectionManager.notifyUser("Remote Flow", "Manzil buferga nusxalandi: localhost:$port")
+                        }
+                    }
+                }
+            }
+        })
+
+        // Right click popup menu
+        val popupMenu = JPopupMenu()
+        val itemOpenBrowser = JMenuItem("🌐 Open in Browser (localhost:port)")
+        itemOpenBrowser.addActionListener {
+            val r = portsTable.selectedRow
+            val profile = settings.activeProfileOrNull ?: return@addActionListener
+            if (r in profile.forwardedPorts.indices) {
+                val p = profile.forwardedPorts[r]
+                val port = if (p.direction == ForwardDirection.LOCAL_TO_REMOTE) p.localPort else p.remotePort
+                try {
+                    Desktop.getDesktop().browse(URI("http://localhost:$port"))
+                } catch (_: Exception) {}
+            }
+        }
+        val itemCopyLocal = JMenuItem("📋 Copy Local Address")
+        itemCopyLocal.addActionListener {
+            val r = portsTable.selectedRow
+            val profile = settings.activeProfileOrNull ?: return@addActionListener
+            if (r in profile.forwardedPorts.indices) {
+                val p = profile.forwardedPorts[r]
+                val sel = StringSelection("localhost:${p.localPort}")
+                Toolkit.getDefaultToolkit().systemClipboard.setContents(sel, sel)
+            }
+        }
+        val itemRestartTunnel = JMenuItem("🔄 Restart This Tunnel")
+        itemRestartTunnel.addActionListener {
+            val r = portsTable.selectedRow
+            val profile = settings.activeProfileOrNull ?: return@addActionListener
+            if (r in profile.forwardedPorts.indices) {
+                val p = profile.forwardedPorts[r]
+                connectionManager.stopSingleForward(p)
+                connectionManager.startSingleForward(p)
+                updatePortsTableData()
+            }
+        }
+        val itemRemove = JMenuItem("🗑 Remove Port")
+        itemRemove.addActionListener { removeSelectedPort() }
+
+        popupMenu.add(itemOpenBrowser)
+        popupMenu.add(itemCopyLocal)
+        popupMenu.addSeparator()
+        popupMenu.add(itemRestartTunnel)
+        popupMenu.add(itemRemove)
+
+        portsTable.componentPopupMenu = popupMenu
         portsBox.add(JBScrollPane(portsTable), BorderLayout.CENTER)
 
-        panel.add(dbCard, BorderLayout.NORTH)
         panel.add(portsBox, BorderLayout.CENTER)
         panel.add(createPortKillerPanel(), BorderLayout.SOUTH)
         return panel
@@ -849,7 +875,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val p = settings.activeProfile
         p.runCommand = runCommandField.text.trim()
         val rawCmd = p.runCommand
-        val cmd = "chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
+        val cmd = "sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
         log("[REMOTE RUN] 1. Eng yangi kodlar serverga sinxronlanmoqda...\n")
 
         syncManager.syncSingleServer(
@@ -883,7 +909,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val p = settings.activeProfile
         p.debugCommand = debugCommandField.text.trim()
         val rawCmd = p.debugCommand
-        val cmd = "chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
+        val cmd = "sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
         log("[REMOTE DEBUG] 1. Kodlar serverga yuklanmoqda...\n")
 
         syncManager.syncSingleServer(
@@ -905,7 +931,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
     private fun executeRemoteStop() {
         log("[STOPPING] Masofaviy ilovani to'xtatish buyrug'i yuborilmoqda...\n")
-        val stopCmd = "pkill -f bootRun 2>/dev/null; pkill -f 'java.*jar' 2>/dev/null; docker compose stop 2>/dev/null; echo 'App stopped.'"
+        val stopCmd = "pkill -f bootRun 2>/dev/null; pkill -f 'java.*jar' 2>/dev/null; echo 'App stopped.'"
         connectionManager.executeRemoteCommand(
             cmd = stopCmd,
             workingDir = settings.activeProfile.remoteProjectPath,
@@ -920,102 +946,76 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val isConn = connectionManager.isConnected
         val activeProfile = settings.activeProfile
         for (p in activeProfile.forwardedPorts) {
-            val status = if (isConn && p.isForwarded) "● Forwarded" else if (isConn) "● Available" else "○ Stopped"
+            val status = if (isConn && p.isForwarded) "● Active" else if (isConn) "● Ready" else "○ Stopped"
+            val directionText = if (p.direction == ForwardDirection.REMOTE_TO_LOCAL) "🌐 Host ➔ 💻 Local" else "💻 Local ➔ 🌐 Host"
             val localAddr = "localhost:" + p.localPort
-            val remotePort = p.remotePort.toString()
-            val action = when (p.localPort) {
-                15672 -> "http://localhost:15672 (UI)"
-                8080 -> "http://localhost:8080 (API)"
-                5432 -> "IntelliJ Database"
+            val remoteAddr = "remote:" + p.remotePort
+            val action = when {
+                p.localPort == 15672 || p.remotePort == 15672 -> "http://localhost:15672 (UI)"
+                p.localPort == 8080 || p.remotePort == 8080 -> "http://localhost:8080 (API)"
+                p.localPort == 5432 || p.remotePort == 5432 -> "IntelliJ Database"
+                p.localPort == 6379 || p.remotePort == 6379 -> "Redis CLI"
+                p.localPort == 3000 || p.remotePort == 3000 -> "http://localhost:3000 (Web)"
+                p.direction == ForwardDirection.REMOTE_TO_LOCAL -> "Reverse -> localhost:${p.localPort}"
                 else -> "Direct Tunnel"
             }
-            portsTableModel.addRow(arrayOf(status, p.serviceName, localAddr, remotePort, action))
+            portsTableModel.addRow(arrayOf(status, directionText, p.serviceName, localAddr, remoteAddr, action))
         }
     }
 
     private fun showAddPortDialog() {
-        val portStr = Messages.showInputDialog(
-            project,
-            "Masofaviy server portini kiriting (masalan: 9092, 3000):",
-            "Forward New Port",
-            Messages.getQuestionIcon()
-        ) ?: return
-
-        val port = portStr.toIntOrNull()
-        if (port == null || port !in 1..65535) {
-            Messages.showErrorDialog(project, "Noto'g'ri port raqami kiritildi!", "Xatolik")
-            return
-        }
-
-        val serviceName = Messages.showInputDialog(
-            project,
-            "Ushbu port uchun nom bering (masalan: Kafka, Frontend):",
-            "Service Name",
-            Messages.getQuestionIcon()
-        ) ?: ("Custom Service (" + port + ")")
-
-        settings.activeProfile.forwardedPorts.add(PortMapping(port, port, serviceName))
-        if (connectionManager.isConnected) {
-            connectionManager.startPortForwarding()
-        }
-        updatePortsTableData()
-    }
-
-    private fun rescueDiskSpace() {
-        if (!connectionManager.isConnected) {
-            log("[WARNING] Serverga ulanmagansiz! Avval 'Connect' tugmasini bosing.\n", true)
-            return
-        }
-
-        val confirm = Messages.showYesNoDialog(
-            project,
-            "Serverdagi foydalanilmayotgan eski Docker image, to'xtagan container va build keshlari tozalanadi.\nBu diskda ko'p GB joy ochib beradi.\n\nDavom etasizmi?",
-            "Rescue Disk Space (Docker Prune)",
-            Messages.getQuestionIcon()
-        )
-        if (confirm != Messages.YES) return
-
-        log("[DISK CLEANUP] docker system prune -af --volumes bajarilmoqda...\n")
-        dockerManager.pruneDockerSystem(
-            onOutput = { log(it) },
-            onComplete = {
-                log("[DISK CLEANUP COMPLETE] Disk tozalandi!\n")
-                connectionManager.notifyUser("Remote Flow: Disk Tozalandi", "Docker kesh va eski imagelar tozalanib, diskda joy ochildi!", NotificationType.INFORMATION)
-                checkServerResources()
+        val activeProfile = settings.activeProfileOrNull ?: return
+        val dialog = AddPortForwardDialog(project, activeProfile)
+        if (dialog.showAndGet()) {
+            val mapping = dialog.getResultPortMapping() ?: return
+            activeProfile.forwardedPorts.add(mapping)
+            if (connectionManager.isConnected) {
+                connectionManager.startSingleForward(mapping)
+                val dirName = if (mapping.direction == ForwardDirection.LOCAL_TO_REMOTE) "Local -> Host" else "Host -> Local"
+                connectionManager.notifyUser("Remote Flow: Port Forward", "${mapping.serviceName} ($dirName) faollashtirildi!")
             }
-        )
+            updatePortsTableData()
+        }
     }
 
-    private fun getSelectedContainerName(): String? {
-        val row = dockerTable.selectedRow
+    private fun removeSelectedPort() {
+        val row = portsTable.selectedRow
         if (row < 0) {
-            Messages.showWarningDialog(project, "Iltimos, jadvaldan konteynerni tanlang!", "Konteyner Tanlanmagan")
-            return null
-        }
-        return dockerTableModel.getValueAt(row, 0) as? String
-    }
-
-    private fun refreshDockerContainers() {
-        if (!connectionManager.isConnected) {
-            log("[WARNING] Serverga ulanmagansiz! Avval 'Connect' tugmasini bosing.\n", true)
+            Messages.showInfoMessage(project, "Iltimos, o'chirmoqchi bo'lgan portingizni jadvaldan tanlang.", "Port Tanlanmagan")
             return
         }
-
-        dockerManager.fetchContainerList { list ->
-            ApplicationManager.getApplication().invokeLater {
-                dockerTableModel.rowCount = 0
-                for (c in list) {
-                    dockerTableModel.addRow(arrayOf(c.name, c.image, c.status, c.ports))
-                }
-                log("[DOCKER] " + list.size + " ta konteyner ro'yxati yangilandi.\n")
+        val profile = settings.activeProfile
+        if (row < profile.forwardedPorts.size) {
+            val portMap = profile.forwardedPorts[row]
+            val confirm = Messages.showYesNoDialog(
+                project,
+                "'${portMap.serviceName}' (${portMap.localPort} <-> ${portMap.remotePort}) port forwardini ro'yxatdan o'chirishni xohlaysizmi?",
+                "Portni O'chirish",
+                Messages.getQuestionIcon()
+            )
+            if (confirm == Messages.YES) {
+                connectionManager.stopSingleForward(portMap)
+                profile.forwardedPorts.removeAt(row)
+                updatePortsTableData()
+                connectionManager.notifyUser("Remote Flow: Port O'chirildi", "${portMap.serviceName} muvaffaqiyatli o'chirildi")
             }
         }
+    }
+
+    private fun restartTunnels() {
+        if (!connectionManager.isConnected) {
+            Messages.showWarningDialog(project, "Serverga ulanmagansiz! Avval 'Connect' tugmasini bosing.", "Ulanilmagan")
+            return
+        }
+        connectionManager.restartAllTunnels()
+        updatePortsTableData()
+        connectionManager.notifyUser("Remote Flow: Tunnellar Yangilandi", "Barcha port forward tunnellar qayta ishga tushirildi!")
     }
 
     private fun log(message: String, isError: Boolean = false) {
         val serverName = settings.activeProfileOrNull?.name ?: ""
         val category = when {
-            message.contains("[DOCKER") -> uz.remote.flow.logging.LogCategory.DOCKER
+            message.contains("[PORT") || message.contains("[TUNNEL") -> uz.remote.flow.logging.LogCategory.PORT
             message.contains("[SYNC") || message.contains("[RSYNC") || message.contains("[SFTP") -> uz.remote.flow.logging.LogCategory.SYNC
             message.contains("[REMOTE RUN") || message.contains("[REMOTE DEBUG") || message.contains("[STOP") -> uz.remote.flow.logging.LogCategory.RUN
             message.contains("[CONNECT") || message.contains("[SSH") -> uz.remote.flow.logging.LogCategory.SSH
@@ -1135,10 +1135,6 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
                     applyColorToBar(diskBar, metrics.diskPercent)
                     diskLabel.text = metrics.diskText
-
-                    if (metrics.rawDockerStats.isNotBlank()) {
-                        dockerStatsArea.text = metrics.rawDockerStats
-                    }
                 }
             },
             onLog = { if (!silent) log(it) },
@@ -1193,26 +1189,6 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
                     log("[PARALLEL SYNC WARNING] Some sync tasks reported errors.\n", true)
                 }
             }
-        )
-    }
-
-    private fun dockerUp() {
-        log("[DOCKER] Running docker compose up -d --build...\n")
-        dockerManager.composeUp(
-            build = true,
-            onOutput = { log(it) },
-            onComplete = { code ->
-                log("[DOCKER] Compose Up finished with exit code $code\n")
-                pingApiHealth()
-            }
-        )
-    }
-
-    private fun dockerDown() {
-        log("[DOCKER] Running docker compose down...\n")
-        dockerManager.composeDown(
-            onOutput = { log(it) },
-            onComplete = { code -> log("[DOCKER] Compose Down finished with exit code $code\n") }
         )
     }
 
@@ -1354,20 +1330,21 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
     private fun createGitStatusCard(): JPanel {
         val card = JPanel(BorderLayout(0, 4))
-        card.border = IdeBorderFactory.createTitledBorder("Masofaviy Git Holati (Remote Git Status)", false)
+        card.border = BorderFactory.createCompoundBorder(
+            IdeBorderFactory.createTitledBorder("Masofaviy Git Holati (Remote Git Status)", false),
+            JBUI.Borders.empty(2, 6, 4, 6)
+        )
 
-        val infoPanel = JPanel(GridLayout(1, 3, 8, 0))
-        infoPanel.border = JBUI.Borders.empty(2, 6)
+        val topRow = JPanel(BorderLayout(8, 0))
 
+        val branchPanel = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0))
         lblGitBranch.font = lblGitBranch.font.deriveFont(Font.BOLD, 12f)
         lblGitBranch.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
-        infoPanel.add(lblGitBranch)
+        branchPanel.add(lblGitBranch)
 
-        lblGitCommit.font = lblGitCommit.font.deriveFont(Font.PLAIN, 11f)
-        infoPanel.add(lblGitCommit)
-
-        lblGitStatus.font = lblGitStatus.font.deriveFont(Font.PLAIN, 11f)
-        infoPanel.add(lblGitStatus)
+        lblGitStatus.font = lblGitStatus.font.deriveFont(Font.BOLD, 11f)
+        branchPanel.add(lblGitStatus)
+        topRow.add(branchPanel, BorderLayout.CENTER)
 
         val btnRow = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
         val btnRefreshGit = JButton("⟳ Check Git")
@@ -1385,8 +1362,15 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         btnGitStashPull.addActionListener { executeRemoteGitStashPull() }
         btnRow.add(btnGitStashPull)
 
-        card.add(infoPanel, BorderLayout.CENTER)
-        card.add(btnRow, BorderLayout.EAST)
+        topRow.add(btnRow, BorderLayout.EAST)
+
+        val bottomRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
+        lblGitCommit.font = lblGitCommit.font.deriveFont(Font.PLAIN, 11f)
+        lblGitCommit.foreground = JBColor.GRAY
+        bottomRow.add(lblGitCommit)
+
+        card.add(topRow, BorderLayout.NORTH)
+        card.add(bottomRow, BorderLayout.CENTER)
         return card
     }
 
@@ -1394,6 +1378,8 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val p = settings.activeProfileOrNull ?: return
         if (!connectionManager.isConnected) {
             lblGitBranch.text = "🌿 Git: Offline"
+            lblGitCommit.text = ""
+            lblGitStatus.text = ""
             return
         }
         val cmd = "git rev-parse --abbrev-ref HEAD 2>/dev/null; echo '---RF_DIV---'; git log -1 --format='%h - %s (%cr)' 2>/dev/null; echo '---RF_DIV---'; git status -s 2>/dev/null"
@@ -1411,13 +1397,13 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
                     if (branch.isNotBlank() && !branch.contains("fatal:")) {
                         lblGitBranch.text = "🌿 Branch: $branch"
-                        lblGitCommit.text = if (commit.isNotBlank()) "📌 $commit" else "📌 -"
+                        lblGitCommit.text = if (commit.isNotBlank()) "📌 $commit" else ""
                         lblGitStatus.text = if (statusLines.isEmpty()) "✔ Clean" else "⚠ ${statusLines.size} ta o'zgargan fayl"
                         lblGitStatus.foreground = if (statusLines.isEmpty()) JBColor(Color(16, 185, 129), Color(16, 185, 129)) else JBColor.ORANGE
                     } else {
                         lblGitBranch.text = "🌿 Git: Repozitoriya emas"
-                        lblGitCommit.text = "-"
-                        lblGitStatus.text = "-"
+                        lblGitCommit.text = ""
+                        lblGitStatus.text = ""
                     }
                 }
             }
@@ -1466,5 +1452,122 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val p = settings.activeProfileOrNull ?: return
         val dialog = uz.remote.flow.config.RemoteConfigManagerDialog(project, p, initialFile)
         dialog.show()
+    }
+}
+
+class AddPortForwardDialog(
+    private val project: Project,
+    private val activeProfile: ServerProfile
+) : DialogWrapper(project, true) {
+
+    private val radioLocalToRemote = JRadioButton("💻 Local ➔ 🌐 Host (Local Port Forwarding, ssh -L)", true)
+    private val radioRemoteToLocal = JRadioButton("🌐 Host ➔ 💻 Local (Reverse Port Forwarding, ssh -R)", false)
+    private val serviceNameField = JBTextField("Backend API")
+    private val localPortField = JBTextField("8080")
+    private val remotePortField = JBTextField("8080")
+    private val hintLabel = JLabel("Kompyuteringizdan masofaviy serverdagi service (DB, Redis, API) ga ulanish")
+
+    init {
+        title = "➕ Forward Port (SSH Tunnel)"
+        val bg = ButtonGroup()
+        bg.add(radioLocalToRemote)
+        bg.add(radioRemoteToLocal)
+
+        radioLocalToRemote.addActionListener {
+            hintLabel.text = "Kompyuteringizdan masofaviy serverdagi service (DB, Redis, API) ga ulanish"
+        }
+        radioRemoteToLocal.addActionListener {
+            hintLabel.text = "Kompyuteringizdagi lokal servisni (Frontend, Webhook, Mock) serverga ochish"
+        }
+
+        init()
+    }
+
+    override fun createCenterPanel(): JComponent {
+        val panel = JPanel(GridBagLayout())
+        panel.border = JBUI.Borders.empty(8)
+        val gbc = GridBagConstraints()
+        gbc.insets = JBUI.insets(4, 6, 4, 6)
+        gbc.fill = GridBagConstraints.HORIZONTAL
+        gbc.anchor = GridBagConstraints.WEST
+
+        // Presets row
+        val presetPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))
+        presetPanel.border = IdeBorderFactory.createTitledBorder("Tezkor Andozalar (Quick Presets)", false)
+
+        fun createPresetBtn(name: String, local: Int, remote: Int, service: String, dir: ForwardDirection): JButton {
+            val btn = JButton(name)
+            btn.addActionListener {
+                if (dir == ForwardDirection.LOCAL_TO_REMOTE) radioLocalToRemote.isSelected = true else radioRemoteToLocal.isSelected = true
+                serviceNameField.text = service
+                localPortField.text = local.toString()
+                remotePortField.text = remote.toString()
+                hintLabel.text = if (dir == ForwardDirection.LOCAL_TO_REMOTE)
+                    "Kompyuteringizdan masofaviy serverdagi service ga ulanish"
+                else "Kompyuteringizdagi lokal servisni serverga ochish"
+            }
+            return btn
+        }
+
+        presetPanel.add(createPresetBtn("🐘 PostgreSQL (5432)", 5432, 5432, "PostgreSQL Database", ForwardDirection.LOCAL_TO_REMOTE))
+        presetPanel.add(createPresetBtn("⚡ Redis (6379)", 6379, 6379, "Redis Cache", ForwardDirection.LOCAL_TO_REMOTE))
+        presetPanel.add(createPresetBtn("🐰 RabbitMQ (15672)", 15672, 15672, "RabbitMQ Web UI", ForwardDirection.LOCAL_TO_REMOTE))
+        presetPanel.add(createPresetBtn("☕ Spring Boot (8080)", 8080, 8080, "Backend API", ForwardDirection.LOCAL_TO_REMOTE))
+        presetPanel.add(createPresetBtn("⚛️ Webhook/Dev (3000)", 3000, 3000, "Local Frontend / Webhook", ForwardDirection.REMOTE_TO_LOCAL))
+
+        gbc.gridx = 0; gbc.gridy = 0; gbc.gridwidth = 2; gbc.weightx = 1.0
+        panel.add(presetPanel, gbc)
+
+        // Direction Selection
+        val dirPanel = JPanel(GridLayout(2, 1, 0, 4))
+        dirPanel.border = IdeBorderFactory.createTitledBorder("Tunnel Yo'nalishi (Forward Direction)", false)
+        dirPanel.add(radioLocalToRemote)
+        dirPanel.add(radioRemoteToLocal)
+
+        gbc.gridy = 1; gbc.gridwidth = 2
+        panel.add(dirPanel, gbc)
+
+        // Hint
+        hintLabel.font = hintLabel.font.deriveFont(Font.ITALIC, 11f)
+        hintLabel.foreground = JBColor.GRAY
+        gbc.gridy = 2; gbc.gridwidth = 2
+        panel.add(hintLabel, gbc)
+
+        // Fields
+        gbc.gridwidth = 1
+        gbc.gridy = 3; gbc.gridx = 0; gbc.weightx = 0.0; panel.add(JBLabel("Service Nomi:"), gbc)
+        gbc.gridx = 1; gbc.weightx = 1.0; panel.add(serviceNameField, gbc)
+
+        gbc.gridy = 4; gbc.gridx = 0; gbc.weightx = 0.0; panel.add(JBLabel("Lokal Port (Local Machine):"), gbc)
+        gbc.gridx = 1; gbc.weightx = 1.0; panel.add(localPortField, gbc)
+
+        gbc.gridy = 5; gbc.gridx = 0; gbc.weightx = 0.0; panel.add(JBLabel("Masofaviy Port (Remote Host):"), gbc)
+        gbc.gridx = 1; gbc.weightx = 1.0; panel.add(remotePortField, gbc)
+
+        panel.preferredSize = Dimension(540, 330)
+        return panel
+    }
+
+    fun getResultPortMapping(): PortMapping? {
+        val lPort = localPortField.text.trim().toIntOrNull() ?: return null
+        val rPort = remotePortField.text.trim().toIntOrNull() ?: return null
+        val name = serviceNameField.text.trim().ifBlank { "Service ($lPort)" }
+        val dir = if (radioRemoteToLocal.isSelected) ForwardDirection.REMOTE_TO_LOCAL else ForwardDirection.LOCAL_TO_REMOTE
+        return PortMapping(lPort, rPort, name, direction = dir)
+    }
+
+    override fun doValidate(): ValidationInfo? {
+        val lPort = localPortField.text.trim().toIntOrNull()
+        if (lPort == null || lPort !in 1..65535) {
+            return ValidationInfo("Lokal port 1 va 65535 orasida bo'lishi shart!", localPortField)
+        }
+        val rPort = remotePortField.text.trim().toIntOrNull()
+        if (rPort == null || rPort !in 1..65535) {
+            return ValidationInfo("Masofaviy port 1 va 65535 orasida bo'lishi shart!", remotePortField)
+        }
+        if (serviceNameField.text.trim().isBlank()) {
+            return ValidationInfo("Iltimos, servis nomini kiriting!", serviceNameField)
+        }
+        return null
     }
 }

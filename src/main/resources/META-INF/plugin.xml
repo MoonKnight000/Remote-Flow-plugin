@@ -5,7 +5,7 @@
 
     <description><![CDATA[
     <b>Remote Flow</b> — Developed by Murodjon.<br/>
-    Lightweight Remote Server Runner, Differential Sync, Docker Compose Manager, and JetBrains Gateway-style Port Forwarding & Hardware Resource Monitor (CPU, RAM, Disk, Redis, RabbitMQ, PostgreSQL, JVM Debug).
+    Lightweight Remote Server Runner, Differential Sync, Bi-directional Port Forwarding (Local ⇄ Remote), Remote JVM Debug, and Hardware Resource Monitor (CPU, RAM, Disk).
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
@@ -74,15 +74,6 @@
                     class="uz.remote.flow.actions.RemoteFlowOpenLogAction"
                     text="Show Remote Flow Logs"
                     description="Open Remote Flow log console in bottom tool window"/>
-            <separator/>
-            <action id="RemoteFlow.DockerUpAction"
-                    class="uz.remote.flow.actions.RemoteFlowDockerUpAction"
-                    text="Docker Compose Up (-d --build)"
-                    description="Run docker compose up on remote server"/>
-            <action id="RemoteFlow.DockerDownAction"
-                    class="uz.remote.flow.actions.RemoteFlowDockerDownAction"
-                    text="Docker Compose Down"
-                    description="Run docker compose down on remote server"/>
             <separator/>
             <action id="RemoteFlow.OpenSettingsAction"
                     class="uz.remote.flow.actions.RemoteFlowOpenSettingsAction"

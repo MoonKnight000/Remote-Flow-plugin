@@ -22,18 +22,54 @@ class RemoteFlowAutoSyncService(private val project: Project) : FileDocumentMana
         if (project.isDisposed) return
         val settings = RemoteFlowSettings.getInstance(project)
         val profile = settings.activeProfileOrNull ?: return
-        if (!profile.autoSyncOnSave) return
-
         val connManager = RemoteConnectionManager.getInstance(project)
         if (!connManager.isConnected) return
 
         val file = FileDocumentManager.getInstance().getFile(document) ?: return
+        val filePath = file.path.replace('\\', '/')
+
+        // Case 1: File was opened directly from Remote Explorer ("Open in IDE")
+        val safeHost = profile.host.replace(":", "_").replace("/", "_")
+        val cachePrefix = java.io.File(System.getProperty("java.io.tmpdir"), "remote-flow-cache/$safeHost").path.replace('\\', '/').trimEnd('/')
+        if (filePath.startsWith(cachePrefix)) {
+            val remotePath = "/" + filePath.removePrefix(cachePrefix).trimStart('/')
+            val now = System.currentTimeMillis()
+            val lastSync = debounceMap[remotePath] ?: 0L
+            if (now - lastSync < 600) return
+            debounceMap[remotePath] = now
+
+            val content = document.text
+            ApplicationManager.getApplication().executeOnPooledThread {
+                uz.remote.flow.files.RemoteFileManager(project).saveFileContent(profile, remotePath, content) { ok, err ->
+                    if (ok) {
+                        connManager.notifyUser(
+                            title = "Remote Flow: Saqlandi ⚡",
+                            message = "'${file.name}' serverda yangilandi: $remotePath",
+                            type = NotificationType.INFORMATION
+                        )
+                        uz.remote.flow.logging.RemoteFlowLogService.getInstance(project).log(
+                            message = "[REMOTE SAVE] '${file.name}' serverda saqlandi: $remotePath\n",
+                            category = uz.remote.flow.logging.LogCategory.FILES,
+                            serverName = profile.name
+                        )
+                    } else {
+                        connManager.notifyUser(
+                            title = "Remote Flow: Xatolik",
+                            message = "'${file.name}' serverda saqlanmadi: $err",
+                            type = NotificationType.ERROR
+                        )
+                    }
+                }
+            }
+            return
+        }
+
+        if (!profile.autoSyncOnSave) return
+
         val basePath = profile.localProjectPath.ifBlank { project.basePath ?: "" }
         if (basePath.isBlank()) return
 
-        val filePath = file.path.replace('\\', '/')
         val cleanBase = basePath.replace('\\', '/').trimEnd('/')
-
         if (!filePath.startsWith(cleanBase)) return
 
         val relPath = filePath.removePrefix(cleanBase).trimStart('/')

@@ -191,9 +191,8 @@ class FastSyncManager(private val project: Project) {
                                 "python3 -m zipfile -e \"" + remoteTempZip + "\" \"" + profile.remoteProjectPath + "\" || " +
                                 "python -m zipfile -e \"" + remoteTempZip + "\" \"" + profile.remoteProjectPath + "\") && " +
                                 "rm -f \"" + remoteTempZip + "\" && " +
-                                "chmod +x \"" + profile.remoteProjectPath + "/gradlew\" 2>/dev/null || true; " +
-                                "chmod +x \"" + profile.remoteProjectPath + "/mvnw\" 2>/dev/null || true; " +
-                                "chmod +x \"" + profile.remoteProjectPath + "\"/*.sh 2>/dev/null || true"
+                                "sed -i 's/\\r$//' \"" + profile.remoteProjectPath + "/gradlew\" \"" + profile.remoteProjectPath + "/mvnw\" \"" + profile.remoteProjectPath + "\"/*.sh 2>/dev/null || true; " +
+                                "chmod +x \"" + profile.remoteProjectPath + "/gradlew\" \"" + profile.remoteProjectPath + "/mvnw\" \"" + profile.remoteProjectPath + "\"/*.sh 2>/dev/null || true"
 
                         connectionManager.executeRemoteCommand(
                             cmd = extractCmd,
@@ -284,7 +283,7 @@ class FastSyncManager(private val project: Project) {
                     val code = process.waitFor()
                     if (code == 0) {
                         if (cleanRelative.endsWith("gradlew") || cleanRelative.endsWith(".sh") || cleanRelative.endsWith("mvnw")) {
-                            connectionManager.executeRemoteCommand("chmod +x \"$remoteTarget\" 2>/dev/null || true", "", {}, {})
+                            connectionManager.executeRemoteCommand("sed -i 's/\\r$//' \"$remoteTarget\" 2>/dev/null || true; chmod +x \"$remoteTarget\" 2>/dev/null || true", "", {}, {})
                         }
                         onComplete(true)
                     } else {
@@ -296,7 +295,7 @@ class FastSyncManager(private val project: Project) {
                             onProgress = onLog,
                             onComplete = { ok ->
                                 if (ok && (cleanRelative.endsWith("gradlew") || cleanRelative.endsWith(".sh") || cleanRelative.endsWith("mvnw"))) {
-                                    connectionManager.executeRemoteCommand("chmod +x \"$remoteTarget\" 2>/dev/null || true", "", {}, {})
+                                    connectionManager.executeRemoteCommand("sed -i 's/\\r$//' \"$remoteTarget\" 2>/dev/null || true; chmod +x \"$remoteTarget\" 2>/dev/null || true", "", {}, {})
                                 }
                                 onComplete(ok)
                             }
@@ -312,7 +311,7 @@ class FastSyncManager(private val project: Project) {
                         onComplete = { success ->
                             if (success) {
                                 if (cleanRelative.endsWith("gradlew") || cleanRelative.endsWith(".sh") || cleanRelative.endsWith("mvnw")) {
-                                    connectionManager.executeRemoteCommand("chmod +x \"$remoteTarget\" 2>/dev/null || true", "", {}, {})
+                                    connectionManager.executeRemoteCommand("sed -i 's/\\r$//' \"$remoteTarget\" 2>/dev/null || true; chmod +x \"$remoteTarget\" 2>/dev/null || true", "", {}, {})
                                 }
                                 onLog("[SYNC SUCCESS] Fayl serverda yangilandi: " + cleanRelative + "\n")
                             } else {
@@ -527,8 +526,10 @@ class FastSyncManager(private val project: Project) {
                 }
                 val code = process.waitFor()
                 if (code == 0) {
+                    val postSyncCmd = "sed -i 's/\\r$//' \"" + profile.remoteProjectPath + "/gradlew\" \"" + profile.remoteProjectPath + "/mvnw\" \"" + profile.remoteProjectPath + "\"/*.sh 2>/dev/null || true; " +
+                            "chmod +x \"" + profile.remoteProjectPath + "/gradlew\" \"" + profile.remoteProjectPath + "/mvnw\" \"" + profile.remoteProjectPath + "\"/*.sh 2>/dev/null || true"
                     connectionManager.executeRemoteCommand(
-                        cmd = "chmod +x \"" + profile.remoteProjectPath + "/gradlew\" \"" + profile.remoteProjectPath + "/mvnw\" \"" + profile.remoteProjectPath + "\"/*.sh 2>/dev/null || true",
+                        cmd = postSyncCmd,
                         workingDir = "",
                         onOutput = {},
                         onComplete = {

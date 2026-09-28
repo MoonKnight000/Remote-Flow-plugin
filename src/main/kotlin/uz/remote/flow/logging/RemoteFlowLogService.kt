@@ -13,7 +13,7 @@ enum class LogCategory(val displayName: String, val badge: String) {
     ALL("All Categories", "[ALL]"),
     SYNC("Sync", "[SYNC]"),
     RUN("Run & Debug", "[RUN]"),
-    DOCKER("Docker", "[DOCKER]"),
+    PORT("Port Forwarding", "[PORT]"),
     SSH("SSH & System", "[SSH]"),
     FILES("Remote Files", "[FILES]");
 

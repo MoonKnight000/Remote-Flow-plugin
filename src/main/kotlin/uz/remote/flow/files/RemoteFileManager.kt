@@ -238,6 +238,61 @@ class RemoteFileManager(private val project: Project) {
         }
     }
 
+    fun uploadFileToRemotePath(
+        profile: ServerProfile = connectionManager.config.activeProfile,
+        localFile: File,
+        remoteExactPath: String,
+        onComplete: (Boolean, String?) -> Unit
+    ) {
+        executor.submit {
+            try {
+                connectionManager.withSshClient(profile) { client ->
+                    val sftp = client.newSFTPClient()
+                    try {
+                        sftp.put(FileSystemFile(localFile), remoteExactPath)
+                    } finally {
+                        try { sftp.close() } catch (_: Exception) {}
+                    }
+                }
+                onComplete(true, null)
+            } catch (e: Exception) {
+                onComplete(false, e.message ?: e.toString())
+            }
+        }
+    }
+
+    fun downloadDirectoryAsArchive(
+        profile: ServerProfile = connectionManager.config.activeProfile,
+        remoteDirPath: String,
+        localTargetArchive: File,
+        onComplete: (Boolean, String?) -> Unit
+    ) {
+        executor.submit {
+            val remoteClean = remoteDirPath.trimEnd('/')
+            val parent = if (remoteClean.lastIndexOf('/') <= 0) "/" else remoteClean.substringBeforeLast('/')
+            val folderName = remoteClean.substringAfterLast('/')
+            val tempRemoteArchive = "/tmp/rf_archive_${System.currentTimeMillis()}.tar.gz"
+
+            val archiveCmd = "cd \"$parent\" && tar -czf \"$tempRemoteArchive\" \"$folderName\""
+            connectionManager.executeRemoteCommand(
+                cmd = archiveCmd,
+                workingDir = "",
+                onOutput = {},
+                onComplete = { code ->
+                    if (code == 0) {
+                        downloadFile(profile, tempRemoteArchive, localTargetArchive) { success, err ->
+                            // Clean up remote temp archive
+                            connectionManager.executeRemoteCommand("rm -f \"$tempRemoteArchive\"", "", {}, {})
+                            onComplete(success, err)
+                        }
+                    } else {
+                        onComplete(false, "Serverda papkani arxivlashda xatolik yuz berdi (Exit code: $code)")
+                    }
+                }
+            )
+        }
+    }
+
     fun createDirectory(
         profile: ServerProfile = connectionManager.config.activeProfile,
         remotePath: String,

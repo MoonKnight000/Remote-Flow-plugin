@@ -59,17 +59,11 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
     private val btnGo = JButton("Go")
     private val btnRefresh = JButton("⟳ Refresh")
 
-    // Filter & Actions
+    // Filter & Primary Actions
     private val searchField = JBTextField()
-    private val btnOpenInIdea = JButton("📄 Open in IDE")
-    private val btnViewModal = JButton("👁 View / Edit")
-    private val btnDownload = JButton("📥 Download")
-    private val btnDiff = JButton("🔍 Diff")
-    private val btnConfigManager = JButton("⚙ Configs")
-    private val btnUpload = JButton("📤 Upload File")
+    private val btnUpload = JButton("📤 Upload")
     private val btnNewFolder = JButton("📁+ Folder")
     private val btnNewFile = JButton("📄+ File")
-    private val btnDelete = JButton("🗑 Delete")
 
     // Table View
     private val tableColumns = arrayOf("Name", "Size", "Type", "Last Modified", "Permissions")
@@ -175,8 +169,8 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         val actionRow = JPanel(BorderLayout(6, 0))
         actionRow.border = JBUI.Borders.empty(2, 4)
 
-        searchField.emptyText.text = "🔍 Filter files..."
-        searchField.preferredSize = Dimension(160, 26)
+        searchField.emptyText.text = "🔍 Qidirish (filter files)..."
+        searchField.preferredSize = Dimension(180, 26)
         searchField.document.addDocumentListener(object : DocumentAdapter() {
             override fun textChanged(e: DocumentEvent) {
                 applyFilter(searchField.text.trim())
@@ -186,39 +180,10 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
 
         val buttonsPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
 
-        btnOpenInIdea.font = btnOpenInIdea.font.deriveFont(Font.BOLD)
-        btnOpenInIdea.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
-        btnOpenInIdea.toolTipText = "Tanlangan faylni IntelliJ IDEA muharririda ochish"
-        btnOpenInIdea.addActionListener {
-            val selected = getSelectedFileInfo() ?: return@addActionListener
-            openInIntelliJEditor(selected)
-        }
-        buttonsPanel.add(btnOpenInIdea)
-
-        btnViewModal.toolTipText = "Fayl ichini ko'rish va to'g'ridan-to'g'ri tahrirlab saqlash"
-        btnViewModal.addActionListener {
-            val selected = getSelectedFileInfo() ?: return@addActionListener
-            openInViewerDialog(selected)
-        }
-        buttonsPanel.add(btnViewModal)
-
-        btnDownload.toolTipText = "Serverdagi faylni kompyuterga yuklab olish"
-        btnDownload.addActionListener { downloadSelectedFile() }
-        buttonsPanel.add(btnDownload)
-
-        btnDiff.toolTipText = "Tanlangan masofaviy faylni lokal fayl bilan IntelliJ Diff oynasida solishtirish"
-        btnDiff.addActionListener {
-            val selected = getSelectedFileInfo() ?: return@addActionListener
-            compareWithLocalFile(selected)
-        }
-        buttonsPanel.add(btnDiff)
-
-        btnConfigManager.toolTipText = "Masofaviy .env va application.yml sozlamalarini tahrirlash"
-        btnConfigManager.addActionListener {
-            val selected = getSelectedFileInfo()
-            openInConfigManager(selected)
-        }
-        buttonsPanel.add(btnConfigManager)
+        val hintLabel = JBLabel("💡 O'ng tugma (Right-Click) orqali to'liq menyu")
+        hintLabel.font = hintLabel.font.deriveFont(Font.ITALIC, 11f)
+        hintLabel.foreground = JBColor.GRAY
+        buttonsPanel.add(hintLabel)
 
         btnUpload.toolTipText = "Kompyuterdan ushbu masofaviy papkaga fayl yuklash"
         btnUpload.addActionListener { uploadFileToCurrentDir() }
@@ -231,11 +196,6 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         btnNewFile.toolTipText = "Yangi bo'sh fayl yaratish (touch)"
         btnNewFile.addActionListener { createNewFilePrompt() }
         buttonsPanel.add(btnNewFile)
-
-        btnDelete.foreground = JBColor.RED
-        btnDelete.toolTipText = "Tanlangan fayl yoki papkani o'chirish"
-        btnDelete.addActionListener { deleteSelectedItem() }
-        buttonsPanel.add(btnDelete)
 
         actionRow.add(buttonsPanel, BorderLayout.CENTER)
         panel.add(actionRow)
@@ -455,6 +415,9 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
                         filesTable.setRowSelectionInterval(row, row)
                         showContextMenu(e.component, e.x, e.y, item)
                     }
+                } else if (SwingUtilities.isRightMouseButton(e)) {
+                    filesTable.clearSelection()
+                    showBackgroundContextMenu(e.component, e.x, e.y)
                 }
             }
         })
@@ -475,15 +438,19 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
 
         filesTree.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
-                val selPath = filesTree.getPathForLocation(e.x, e.y) ?: return
-                val node = selPath.lastPathComponent as? DefaultMutableTreeNode ?: return
-                val item = node.userObject as? RemoteFileInfo ?: return
+                val selPath = filesTree.getPathForLocation(e.x, e.y)
+                if (selPath != null) {
+                    val node = selPath.lastPathComponent as? DefaultMutableTreeNode ?: return
+                    val item = node.userObject as? RemoteFileInfo ?: return
 
-                if (e.clickCount == 2 && !item.isDirectory) {
-                    openInIntelliJEditor(item)
+                    if (e.clickCount == 2 && !item.isDirectory) {
+                        openInIntelliJEditor(item)
+                    } else if (SwingUtilities.isRightMouseButton(e)) {
+                        filesTree.selectionPath = selPath
+                        showContextMenu(e.component, e.x, e.y, item)
+                    }
                 } else if (SwingUtilities.isRightMouseButton(e)) {
-                    filesTree.selectionPath = selPath
-                    showContextMenu(e.component, e.x, e.y, item)
+                    showBackgroundContextMenu(e.component, e.x, e.y)
                 }
             }
         })
@@ -510,38 +477,70 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         val menu = JPopupMenu()
 
         if (!item.isDirectory) {
-            val itemOpenIdea = JMenuItem("📄 Open in IntelliJ Editor")
-            itemOpenIdea.font = itemOpenIdea.font.deriveFont(Font.BOLD)
+            // 1. Open in IDE
+            val itemOpenIdea = JMenuItem("📄 Open in IDE")
+            itemOpenIdea.font = itemOpenIdea.font.deriveFont(Font.BOLD, 12f)
+            itemOpenIdea.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
+            itemOpenIdea.toolTipText = "Faylni IntelliJ muharririda ochish (Ctrl+S bilan serverda avtomatik saqlanadi)"
             itemOpenIdea.addActionListener { openInIntelliJEditor(item) }
             menu.add(itemOpenIdea)
 
-            val itemViewModal = JMenuItem("👁 View / Edit in Viewer")
+            // 2. View / Edit in Viewer Modal
+            val itemViewModal = JMenuItem("👁 View / Edit (Viewer Modal)")
             itemViewModal.addActionListener { openInViewerDialog(item) }
             menu.add(itemViewModal)
 
-            val itemDownload = JMenuItem("📥 Download to Local...")
-            itemDownload.addActionListener { downloadSelectedFile(item) }
-            menu.add(itemDownload)
-
+            // 3. Diff with Local File
             val itemDiff = JMenuItem("🔍 Compare with Local File (Diff)")
             itemDiff.addActionListener { compareWithLocalFile(item) }
             menu.add(itemDiff)
 
-            if (item.name.startsWith(".env") || item.name.endsWith(".yml") || item.name.endsWith(".yaml") || item.name.endsWith(".properties")) {
-                val itemConfigManager = JMenuItem("⚙ Edit in Config Manager (.env / .yml)")
+            // 4. Remote Config Manager
+            if (item.name.startsWith(".env") || item.name.endsWith(".yml") || item.name.endsWith(".yaml") || item.name.endsWith(".properties") || item.name.endsWith(".json")) {
+                val itemConfigManager = JMenuItem("⚙ Edit in Remote Config Manager (.env / .yml)")
                 itemConfigManager.addActionListener { openInConfigManager(item) }
                 menu.add(itemConfigManager)
             }
 
             menu.addSeparator()
+
+            // 5. Download
+            val itemDownload = JMenuItem("📥 Download to Local...")
+            itemDownload.addActionListener { downloadSelectedFile(item) }
+            menu.add(itemDownload)
+
+            // 6. Upload & Replace
+            val itemUploadReplace = JMenuItem("📤 Upload & Replace with Local File...")
+            itemUploadReplace.addActionListener { uploadAndReplaceFile(item) }
+            menu.add(itemUploadReplace)
+
+            menu.addSeparator()
         } else if (!item.isParentDir) {
             val itemOpenFolder = JMenuItem("📂 Open Directory")
+            itemOpenFolder.font = itemOpenFolder.font.deriveFont(Font.BOLD)
             itemOpenFolder.addActionListener { loadDirectory(item.path) }
             menu.add(itemOpenFolder)
+
+            menu.addSeparator()
 
             val itemUploadHere = JMenuItem("📤 Upload File Here...")
             itemUploadHere.addActionListener { uploadFileToDir(item.path) }
             menu.add(itemUploadHere)
+
+            val itemNewSubFolder = JMenuItem("📁+ New Subfolder...")
+            itemNewSubFolder.addActionListener { createNewFolderPrompt(item.path) }
+            menu.add(itemNewSubFolder)
+
+            val itemNewSubFile = JMenuItem("📄+ New File Inside...")
+            itemNewSubFile.addActionListener { createNewFilePrompt(item.path) }
+            menu.add(itemNewSubFile)
+
+            menu.addSeparator()
+
+            val itemDownloadFolder = JMenuItem("📥 Download Folder (as Zip)...")
+            itemDownloadFolder.addActionListener { downloadFolder(item) }
+            menu.add(itemDownloadFolder)
+
             menu.addSeparator()
         }
 
@@ -564,6 +563,39 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
             statusLabel.text = "Yo'l buferga nusxalandi: ${item.path}"
         }
         menu.add(itemCopyPath)
+
+        val itemRefresh = JMenuItem("⟳ Refresh Directory")
+        itemRefresh.addActionListener { refreshCurrentDirectory() }
+        menu.add(itemRefresh)
+
+        menu.show(component, x, y)
+    }
+
+    private fun showBackgroundContextMenu(component: Component, x: Int, y: Int) {
+        val menu = JPopupMenu()
+        val curPath = pathField.text.trim().ifBlank { settings.activeProfile.remoteProjectPath }
+
+        val itemUpload = JMenuItem("📤 Upload File to Current Directory...")
+        itemUpload.addActionListener { uploadFileToCurrentDir() }
+        menu.add(itemUpload)
+
+        val itemNewFolder = JMenuItem("📁+ New Folder...")
+        itemNewFolder.addActionListener { createNewFolderPrompt(curPath) }
+        menu.add(itemNewFolder)
+
+        val itemNewFile = JMenuItem("📄+ New File...")
+        itemNewFile.addActionListener { createNewFilePrompt(curPath) }
+        menu.add(itemNewFile)
+
+        menu.addSeparator()
+
+        val itemCopyCur = JMenuItem("📋 Copy Current Path ($curPath)")
+        itemCopyCur.addActionListener {
+            val sel = StringSelection(curPath)
+            Toolkit.getDefaultToolkit().systemClipboard.setContents(sel, sel)
+            statusLabel.text = "Yo'l buferga nusxalandi: $curPath"
+        }
+        menu.add(itemCopyCur)
 
         val itemRefresh = JMenuItem("⟳ Refresh")
         itemRefresh.addActionListener { refreshCurrentDirectory() }
@@ -599,8 +631,9 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
                 if (success && targetLocalFile.exists()) {
                     val vFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(targetLocalFile)
                     if (vFile != null) {
+                        vFile.refresh(false, false)
                         FileEditorManager.getInstance(project).openFile(vFile, true)
-                        statusLabel.text = "Fayl IntelliJ muharririda ochildi: ${item.name}"
+                        statusLabel.text = "Fayl IntelliJ muharririda ochildi: ${item.name} (Ctrl+S bilan serverda avtomatik saqlanadi)"
                     } else {
                         openInViewerDialog(item)
                     }
@@ -658,6 +691,63 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         }
     }
 
+    private fun downloadFolder(folderItem: RemoteFileInfo) {
+        if (!folderItem.isDirectory || folderItem.isParentDir) return
+        val profile = settings.activeProfileOrNull ?: return
+
+        val descriptor = FileSaverDescriptor("Download Remote Folder", "Papkani arxiv (.tar.gz) sifatida saqlash joyini tanlang", "tar.gz")
+        val dialog = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project)
+        val baseVirtualDir = project.basePath?.let { LocalFileSystem.getInstance().findFileByPath(it) }
+        val target = dialog.save(baseVirtualDir, "${folderItem.name}.tar.gz") ?: return
+
+        statusLabel.text = "Papka arxivlanib yuklab olinmoqda: ${folderItem.name}..."
+        fileManager.downloadDirectoryAsArchive(profile, folderItem.path, target.file) { success, err ->
+            ApplicationManager.getApplication().invokeLater {
+                if (success) {
+                    statusLabel.text = "Papka muvaffaqiyatli saqlandi: ${target.file.name}"
+                    Messages.showInfoMessage(project, "Papka arxiv sifatida kompyuterga saqlandi:\n${target.file.absolutePath}", "Yuklab Olindi")
+                } else {
+                    statusLabel.text = "Xatolik: $err"
+                    Messages.showErrorDialog(project, "Papkani yuklab olishda xatolik:\n$err", "Xatolik")
+                }
+            }
+        }
+    }
+
+    private fun uploadAndReplaceFile(item: RemoteFileInfo) {
+        val profile = settings.activeProfileOrNull ?: return
+        if (item.isDirectory || item.isParentDir) return
+
+        val descriptor = FileChooserDescriptor(true, false, false, false, false, false)
+        descriptor.title = "Upload & Replace: ${item.name}"
+        descriptor.description = "Serverdagi '${item.path}' faylini almashtirish uchun lokal faylni tanlang:"
+
+        val files = FileChooser.chooseFiles(descriptor, project, null)
+        if (files.isEmpty()) return
+        val localFile = File(files[0].path)
+
+        val confirm = Messages.showYesNoDialog(
+            project,
+            "Serverdagi '${item.name}' fayli tanlangan '${localFile.name}' bilan almashtiriladi.\n\nDavom etasizmi?",
+            "Faylni Almashtirishni Tasdiqlang",
+            Messages.getQuestionIcon()
+        )
+        if (confirm != Messages.YES) return
+
+        statusLabel.text = "Fayl almashtirilmoqda: ${item.name}..."
+        fileManager.uploadFileToRemotePath(profile, localFile, item.path) { success, err ->
+            ApplicationManager.getApplication().invokeLater {
+                if (success) {
+                    statusLabel.text = "Fayl muvaffaqiyatli almashtirildi: ${item.name}"
+                    refreshCurrentDirectory()
+                } else {
+                    statusLabel.text = "Xatolik: $err"
+                    Messages.showErrorDialog(project, "Serverga yuklab bo'lmadi:\n$err", "Xatolik")
+                }
+            }
+        }
+    }
+
     private fun uploadFileToCurrentDir() {
         uploadFileToDir(pathField.text.trim())
     }
@@ -686,7 +776,7 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         }
     }
 
-    private fun createNewFolderPrompt() {
+    private fun createNewFolderPrompt(parentDir: String = pathField.text.trim().trimEnd('/')) {
         val folderName = Messages.showInputDialog(
             project,
             "Yangi papka nomini kiriting:",
@@ -701,8 +791,8 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         }
 
         val profile = settings.activeProfileOrNull ?: return
-        val currentDir = pathField.text.trim().trimEnd('/')
-        val newPath = "$currentDir/$clean"
+        val cleanParent = parentDir.ifBlank { "/" }
+        val newPath = if (cleanParent == "/") "/$clean" else "$cleanParent/$clean"
 
         statusLabel.text = "Papka yaratilmoqda: $clean..."
         fileManager.createDirectory(profile, newPath) { success, err ->
@@ -718,7 +808,7 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         }
     }
 
-    private fun createNewFilePrompt() {
+    private fun createNewFilePrompt(parentDir: String = pathField.text.trim().trimEnd('/')) {
         val fileName = Messages.showInputDialog(
             project,
             "Yangi fayl nomini kiriting (masalan: application-dev.yml, test.sh):",
@@ -733,8 +823,8 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         }
 
         val profile = settings.activeProfileOrNull ?: return
-        val currentDir = pathField.text.trim().trimEnd('/')
-        val newPath = "$currentDir/$clean"
+        val cleanParent = parentDir.ifBlank { "/" }
+        val newPath = if (cleanParent == "/") "/$clean" else "$cleanParent/$clean"
 
         statusLabel.text = "Fayl yaratilmoqda: $clean..."
         fileManager.createNewFile(profile, newPath) { success, err ->

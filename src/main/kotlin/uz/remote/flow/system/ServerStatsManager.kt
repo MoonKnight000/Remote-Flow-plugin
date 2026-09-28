@@ -13,8 +13,7 @@ data class MachineMetrics(
     var diskUsedGb: Double = 0.0,
     var diskTotalGb: Double = 0.0,
     var diskPercent: Int = 0,
-    var diskText: String = "N/A",
-    var rawDockerStats: String = ""
+    var diskText: String = "N/A"
 )
 
 class ServerStatsManager(private val project: Project) {
@@ -30,8 +29,6 @@ class ServerStatsManager(private val project: Project) {
             "echo -n 'RAM: '; free -m | awk 'NR==2{printf \"%s %s\\n\", \$3, \$2}'; " +
             "echo -n 'DISK: '; df -m / | awk 'NR==2{printf \"%s %s\\n\", \$3, \$2}'; " +
             "echo -n 'CPU: '; top -bn1 | grep -i 'Cpu(s)' | awk '{print \$2 + \$4}' 2>/dev/null || uptime; " +
-            "echo '---DOCKER_START---'; " +
-            "docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}' 2>/dev/null || echo 'No containers'; " +
             "echo '---METRICS_END---'"
 
         val fullOutput = StringBuilder()
@@ -87,10 +84,6 @@ class ServerStatsManager(private val project: Project) {
                     m.cpuPercent = cpuVal.toInt().coerceIn(0, 100)
                     m.cpuText = String.format("%d%%", m.cpuPercent)
                 }
-            }
-
-            if (output.contains("---DOCKER_START---") && output.contains("---METRICS_END---")) {
-                m.rawDockerStats = output.substringAfter("---DOCKER_START---").substringBefore("---METRICS_END---").trim()
             }
         } catch (_: Exception) {}
         return m

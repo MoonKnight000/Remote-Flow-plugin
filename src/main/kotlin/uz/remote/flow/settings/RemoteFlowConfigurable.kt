@@ -433,17 +433,19 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         val portsBox = JPanel(BorderLayout(0, 6))
         portsBox.border = IdeBorderFactory.createTitledBorder("Forwarded Ports (SSH Tunnels)", false)
 
-        val portCols = arrayOf("Local Port", "Remote Port", "Service Name")
+        val portCols = arrayOf("Direction", "Local Port", "Remote Port", "Service Name")
         portsTableModel = object : DefaultTableModel(portCols, 0) {
             override fun isCellEditable(row: Int, column: Int): Boolean = true
         }
         portsTable = JBTable(portsTableModel)
         portsTable.rowHeight = 24
+        portsTable.columnModel.getColumn(0).cellEditor = DefaultCellEditor(JComboBox(arrayOf("Local -> Host", "Host -> Local")))
+        portsTable.columnModel.getColumn(0).preferredWidth = 110
 
         val portToolbar = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
         val btnAddPort = JButton("➕ Add Port")
         btnAddPort.addActionListener {
-            portsTableModel.addRow(arrayOf("8080", "8080", "Custom Service"))
+            portsTableModel.addRow(arrayOf("Local -> Host", "8080", "8080", "Custom Service"))
         }
         val btnDelPort = JButton("🗑 Remove Port")
         btnDelPort.addActionListener {
@@ -507,7 +509,8 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         if (::portsTableModel.isInitialized) {
             portsTableModel.rowCount = 0
             for (pt in p.forwardedPorts) {
-                portsTableModel.addRow(arrayOf(pt.localPort.toString(), pt.remotePort.toString(), pt.serviceName))
+                val dir = if (pt.direction == ForwardDirection.REMOTE_TO_LOCAL) "Host -> Local" else "Local -> Host"
+                portsTableModel.addRow(arrayOf(dir, pt.localPort.toString(), pt.remotePort.toString(), pt.serviceName))
             }
         }
     }
@@ -531,10 +534,12 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         if (::portsTableModel.isInitialized) {
             val updated = mutableListOf<PortMapping>()
             for (row in 0 until portsTableModel.rowCount) {
-                val lPort = (portsTableModel.getValueAt(row, 0) as? String)?.toIntOrNull() ?: 8080
-                val rPort = (portsTableModel.getValueAt(row, 1) as? String)?.toIntOrNull() ?: 8080
-                val sName = (portsTableModel.getValueAt(row, 2) as? String) ?: "Service"
-                updated.add(PortMapping(lPort, rPort, sName))
+                val dirStr = portsTableModel.getValueAt(row, 0) as? String ?: ""
+                val dir = if (dirStr.contains("Host -> Local")) ForwardDirection.REMOTE_TO_LOCAL else ForwardDirection.LOCAL_TO_REMOTE
+                val lPort = (portsTableModel.getValueAt(row, 1) as? String)?.toIntOrNull() ?: 8080
+                val rPort = (portsTableModel.getValueAt(row, 2) as? String)?.toIntOrNull() ?: 8080
+                val sName = (portsTableModel.getValueAt(row, 3) as? String) ?: "Service"
+                updated.add(PortMapping(lPort, rPort, sName, direction = dir))
             }
             p.forwardedPorts = updated
         }

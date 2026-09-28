@@ -7,6 +7,8 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.connection.channel.direct.Parameters
+import net.schmizz.sshj.connection.channel.forwarded.RemotePortForwarder
+import net.schmizz.sshj.connection.channel.forwarded.SocketForwardingConnectListener
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -25,6 +27,7 @@ class RemoteConnectionManager(private val project: Project) {
     private val executor = Executors.newCachedThreadPool()
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
     private val activeTunnels = ConcurrentHashMap<Int, ServerSocket>()
+    private val activeRemoteForwards = ConcurrentHashMap<Int, RemotePortForwarder.Forward>()
 
     val settings get() = uz.remote.flow.settings.RemoteFlowSettings.getInstance(project)
     val config get() = settings.config
@@ -316,7 +319,19 @@ class RemoteConnectionManager(private val project: Project) {
         if (!client.isConnected) return
 
         for (portMap in profile.forwardedPorts) {
-            if (activeTunnels.containsKey(portMap.localPort)) continue
+            startSingleForward(portMap)
+        }
+    }
+
+    fun startSingleForward(portMap: PortMapping) {
+        val client = sshClient ?: return
+        if (!client.isConnected) return
+
+        if (portMap.direction == ForwardDirection.LOCAL_TO_REMOTE) {
+            if (activeTunnels.containsKey(portMap.localPort)) {
+                portMap.isForwarded = true
+                return
+            }
 
             executor.submit {
                 try {
@@ -330,9 +345,60 @@ class RemoteConnectionManager(private val project: Project) {
                     client.newLocalPortForwarder(params, serverSocket).listen()
                 } catch (e: Exception) {
                     portMap.isForwarded = false
+                    activeTunnels.remove(portMap.localPort)?.let {
+                        try { it.close() } catch (_: Exception) {}
+                    }
+                }
+            }
+        } else {
+            // ForwardDirection.REMOTE_TO_LOCAL (Host -> Local, ssh -R)
+            if (activeRemoteForwards.containsKey(portMap.remotePort)) {
+                portMap.isForwarded = true
+                return
+            }
+
+            executor.submit {
+                try {
+                    val forward = RemotePortForwarder.Forward(portMap.remotePort)
+                    val listener = SocketForwardingConnectListener(InetSocketAddress("127.0.0.1", portMap.localPort))
+                    client.remotePortForwarder.bind(forward, listener)
+                    activeRemoteForwards[portMap.remotePort] = forward
+                    portMap.isForwarded = true
+                } catch (e: Exception) {
+                    portMap.isForwarded = false
+                    activeRemoteForwards.remove(portMap.remotePort)
                 }
             }
         }
+    }
+
+    fun stopSingleForward(portMap: PortMapping) {
+        if (portMap.direction == ForwardDirection.LOCAL_TO_REMOTE) {
+            activeTunnels.remove(portMap.localPort)?.let { socket ->
+                try { socket.close() } catch (_: Exception) {}
+            }
+        } else {
+            activeRemoteForwards.remove(portMap.remotePort)?.let { forward ->
+                try { sshClient?.remotePortForwarder?.cancel(forward) } catch (_: Exception) {}
+            }
+        }
+        portMap.isForwarded = false
+    }
+
+    fun restartAllTunnels(profile: ServerProfile = config.activeProfile) {
+        activeTunnels.forEach { (_, socket) ->
+            try { socket.close() } catch (_: Exception) {}
+        }
+        activeTunnels.clear()
+
+        val client = sshClient
+        activeRemoteForwards.forEach { (_, forward) ->
+            try { client?.remotePortForwarder?.cancel(forward) } catch (_: Exception) {}
+        }
+        activeRemoteForwards.clear()
+
+        profile.forwardedPorts.forEach { it.isForwarded = false }
+        startPortForwarding(profile)
     }
 
     fun executeRemoteCommand(
@@ -390,6 +456,14 @@ class RemoteConnectionManager(private val project: Project) {
             } catch (_: Exception) {}
         }
         activeTunnels.clear()
+
+        val client = sshClient
+        activeRemoteForwards.forEach { (_, forward) ->
+            try {
+                client?.remotePortForwarder?.cancel(forward)
+            } catch (_: Exception) {}
+        }
+        activeRemoteForwards.clear()
 
         config.activeProfile.forwardedPorts.forEach { it.isForwarded = false }
 
