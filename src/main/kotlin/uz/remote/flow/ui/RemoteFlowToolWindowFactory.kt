@@ -3,6 +3,7 @@ package uz.remote.flow.ui
 import com.intellij.execution.filters.TextConsoleBuilderFactory
 import com.intellij.execution.ui.ConsoleView
 import com.intellij.execution.ui.ConsoleViewContentType
+import com.intellij.icons.AllIcons
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -66,10 +67,10 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
     // Header Controls
     private val profileComboBox = JComboBox<ServerProfile>()
-    private val btnConnectToggle = JButton("⚡ Connect")
+    private val btnConnectToggle = JButton("Connect", AllIcons.Actions.Execute)
     private val connectionBadge = ConnectionStatusBadge()
     private val apiHealthLabel = JLabel("API: --")
-    private val btnSettings = JButton("⚙ Settings")
+    private val btnSettings = JButton("Settings", AllIcons.General.Settings)
 
     // Remote Git Status Labels
     private val lblGitBranch = JLabel("🌿 Branch: -")
@@ -102,7 +103,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     // Hardware Resource Monitor Controls
     private val monitorModeBox = JComboBox(arrayOf("⚡ Real-time (3s)", "⏱ Real-time (5s)", "🔍 Manual (On demand)", "🚫 Off (Disabled)"))
     private val monitorStatusLabel = JLabel("● Active")
-    private val btnRefreshStats = JButton("⟳ Refresh")
+    private val btnRefreshStats = JButton("Refresh", AllIcons.Actions.Refresh)
     private var monitorScheduledTask: ScheduledFuture<*>? = null
     private val monitorExecutor = AppExecutorUtil.getAppScheduledExecutorService()
     private var isUpdatingMonitorUi = false
@@ -130,12 +131,12 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         // Setup Header Control Bar
         add(createHeaderPanel(), BorderLayout.NORTH)
 
-        // 5 Logical Tabs
-        tabbedPane.addTab("📊 Dashboard", createDashboardTab())
-        tabbedPane.addTab("📁 Files", filesPanel)
-        tabbedPane.addTab("🚀 Run & Debug", createRunDebugTab())
-        tabbedPane.addTab("🔌 Port Forwarding", createPortsTab())
-        tabbedPane.addTab("💻 Terminal", createTerminalTab())
+        // 5 Logical Tabs with native IntelliJ AllIcons
+        tabbedPane.addTab("Dashboard", AllIcons.Nodes.Services, createDashboardTab())
+        tabbedPane.addTab("Files", AllIcons.Nodes.Folder, filesPanel)
+        tabbedPane.addTab("Run & Debug", AllIcons.Actions.Execute, createRunDebugTab())
+        tabbedPane.addTab("Port Forwarding", AllIcons.General.Web, createPortsTab())
+        tabbedPane.addTab("Terminal", RemoteFlowIcons.TERMINAL, createTerminalTab())
 
         add(tabbedPane, BorderLayout.CENTER)
 
@@ -221,7 +222,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
         val right = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 2))
 
-        val btnLogsHeader = JButton("📜 Logs")
+        val btnLogsHeader = JButton("Logs", AllIcons.Nodes.LogFolder)
         btnLogsHeader.toolTipText = "Open unified Remote Flow logs window"
         btnLogsHeader.addActionListener {
             com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("Remote Flow Log")?.show(null)
@@ -298,13 +299,15 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val p = settings.activeProfile
         connectionBadge.updateStatus(connected, p.name)
         if (connected) {
-            btnConnectToggle.text = "⏹ Disconnect"
+            btnConnectToggle.text = "Disconnect"
+            btnConnectToggle.icon = AllIcons.Actions.Suspend
             btnConnectToggle.foreground = JBColor.RED
             checkRemoteGitStatus()
         } else {
-            btnConnectToggle.text = "⚡ Connect"
+            btnConnectToggle.text = "Connect"
+            btnConnectToggle.icon = AllIcons.Actions.Execute
             btnConnectToggle.foreground = JBColor.foreground()
-            lblGitBranch.text = "🌿 Branch: -"
+            lblGitBranch.text = "Branch: -"
             lblGitCommit.text = ""
             lblGitStatus.text = ""
         }
@@ -336,7 +339,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.0; summaryCard.add(JBLabel("Remote Directory:"), gbc)
         gbc.gridx = 1; gbc.gridwidth = 2; gbc.weightx = 1.0; summaryCard.add(lblServerRemoteDir, gbc)
 
-        val btnOpenDir = JButton("📁 Browse Files")
+        val btnOpenDir = JButton("Browse Files", AllIcons.Nodes.Folder)
         btnOpenDir.toolTipText = "Browse all files in this remote directory"
         btnOpenDir.addActionListener {
             selectTab("Files")
@@ -366,7 +369,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         modePanel.add(monitorStatusLabel)
 
         val btnPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
-        val btnTaskManager = JButton("📊 Task Manager")
+        val btnTaskManager = JButton("Task Manager", AllIcons.Nodes.Services)
         btnTaskManager.font = btnTaskManager.font.deriveFont(Font.BOLD)
         btnTaskManager.toolTipText = "Open Remote Task Manager (Top CPU & Memory processes)"
         btnTaskManager.addActionListener {
@@ -430,45 +433,29 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val quickActionGrid = JPanel(GridLayout(0, 3, 6, 6))
         quickActionGrid.border = JBUI.Borders.empty(4, 6, 6, 6)
 
-        val btnBrowseFiles = JButton("📁 Browse Remote Files")
-        btnBrowseFiles.toolTipText = "Browse project files on remote server (remoteProjectPath)"
-        btnBrowseFiles.addActionListener {
-            selectTab("Files")
-            filesPanel.loadDirectory(settings.activeProfile.remoteProjectPath)
-        }
-        quickActionGrid.add(btnBrowseFiles)
+        val btnQuickSync = JButton("Sync Server", AllIcons.Actions.Upload)
+        btnQuickSync.toolTipText = "Upload modified project files to the active server"
+        btnQuickSync.addActionListener { syncFiles() }
+        quickActionGrid.add(btnQuickSync)
 
-        val btnDryRun = JButton("🔍 Preview / Diff")
+        val btnDryRun = JButton("Preview Diff", AllIcons.Actions.Diff)
         btnDryRun.toolTipText = "Compare with remote server (Dry-Run Diff)"
         btnDryRun.addActionListener {
             syncManager.previewDryRun(settings.activeProfile, { log(it) }, {})
         }
         quickActionGrid.add(btnDryRun)
 
-        val btnSyncAll = JButton("🌐 Sync ALL Servers")
+        val btnSyncAll = JButton("Sync All Servers", AllIcons.Actions.Commit)
         btnSyncAll.toolTipText = "Synchronize all servers in parallel"
         btnSyncAll.addActionListener { syncAllServers() }
         quickActionGrid.add(btnSyncAll)
 
-        val btnPortForwarding = JButton("🔌 Port Tunnels")
-        btnPortForwarding.toolTipText = "Manage remote and local port forwarding tunnels"
-        btnPortForwarding.addActionListener { selectTab("Port") }
-        quickActionGrid.add(btnPortForwarding)
-
-        val btnOpenTerminalQuick = JButton("💻 SSH Terminal")
-        btnOpenTerminalQuick.toolTipText = "Open SSH session in IntelliJ terminal"
-        btnOpenTerminalQuick.addActionListener {
-            val p = settings.activeProfileOrNull ?: return@addActionListener
-            uz.remote.flow.terminal.RemoteTerminalHelper.openTerminal(project, p)
-        }
-        quickActionGrid.add(btnOpenTerminalQuick)
-
-        val btnRemoteConfigs = JButton("⚙ Remote Configs")
-        btnRemoteConfigs.toolTipText = "Manage remote .env and application.yml configuration files"
+        val btnRemoteConfigs = JButton("Remote Configs", AllIcons.General.Settings)
+        btnRemoteConfigs.toolTipText = "Manage remote .env, application.yml, and gradle.properties"
         btnRemoteConfigs.addActionListener { openRemoteConfigManager() }
         quickActionGrid.add(btnRemoteConfigs)
 
-        val btnQuickTaskManager = JButton("📊 Task Manager")
+        val btnQuickTaskManager = JButton("Task Manager", AllIcons.Nodes.Services)
         btnQuickTaskManager.toolTipText = "Inspect remote processes, top CPU/RAM, and kill unresponsive processes"
         btnQuickTaskManager.addActionListener {
             val p = settings.activeProfileOrNull ?: return@addActionListener
@@ -479,6 +466,14 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
             uz.remote.flow.system.RemoteTaskManagerDialog(project, p).show()
         }
         quickActionGrid.add(btnQuickTaskManager)
+
+        val btnOpenTerminalQuick = JButton("SSH Terminal", RemoteFlowIcons.TERMINAL)
+        btnOpenTerminalQuick.toolTipText = "Open SSH session in IntelliJ terminal"
+        btnOpenTerminalQuick.addActionListener {
+            val p = settings.activeProfileOrNull ?: return@addActionListener
+            uz.remote.flow.terminal.RemoteTerminalHelper.openTerminal(project, p)
+        }
+        quickActionGrid.add(btnOpenTerminalQuick)
 
         val quickActionCard = CollapsibleCard(
             title = "Quick Operations",
@@ -539,13 +534,13 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         gbc.gridx = 1; gbc.weightx = 1.0; runCard.add(runCommandField, gbc)
 
         val runBtnRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2))
-        val btnRun = JButton("▶ Remote Run (Sync & Build & Run)")
+        val btnRun = JButton("Remote Run (Sync & Build & Run)", AllIcons.Actions.Execute)
         btnRun.font = btnRun.font.deriveFont(Font.BOLD)
         btnRun.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
         btnRun.addActionListener { executeRemoteRun() }
         runBtnRow.add(btnRun)
 
-        val btnStop = JButton("⏹ Stop App")
+        val btnStop = JButton("Stop App", AllIcons.Actions.Suspend)
         btnStop.foreground = JBColor.RED
         btnStop.addActionListener { executeRemoteStop() }
         runBtnRow.add(btnStop)
@@ -562,7 +557,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         gbc.gridx = 1; gbc.weightx = 1.0; debugCard.add(debugCommandField, gbc)
 
         val debugBtnRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2))
-        val btnDebug = JButton("🪲 Remote Debug (Start in Debug Mode)")
+        val btnDebug = JButton("Remote Debug (Start in Debug Mode)", AllIcons.Actions.StartDebugger)
         btnDebug.font = btnDebug.font.deriveFont(Font.BOLD)
         btnDebug.foreground = JBColor(Color(245, 158, 11), Color(245, 158, 11))
         btnDebug.addActionListener { executeRemoteDebug() }
@@ -589,7 +584,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         cardContent.add(lblNotice)
         cardContent.add(Box.createVerticalStrut(12))
 
-        val btnOpenBottomLog = JButton("📜 Open 'Remote Flow Log' Window")
+        val btnOpenBottomLog = JButton("Open 'Remote Flow Log' Window", AllIcons.Nodes.LogFolder)
         btnOpenBottomLog.font = btnOpenBottomLog.font.deriveFont(Font.BOLD, 12f)
         btnOpenBottomLog.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
         btnOpenBottomLog.preferredSize = Dimension(320, 36)
@@ -635,20 +630,15 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         portHeaderLeft.add(lblTunnelsSummary)
 
         val portHeaderRight = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
-        val btnAddPort = JButton("➕ Forward New Port...")
+        val btnAddPort = JButton("Forward New Port...", AllIcons.General.Add)
         btnAddPort.toolTipText = "Add new port forward (Local -> Host or Host -> Local)"
         btnAddPort.addActionListener { showAddPortDialog() }
         portHeaderRight.add(btnAddPort)
 
-        val btnRestartTunnels = JButton("🔄 Restart Tunnels")
+        val btnRestartTunnels = JButton("Restart All Tunnels", AllIcons.Actions.Restart)
         btnRestartTunnels.toolTipText = "Restart all active port forwarding tunnels"
         btnRestartTunnels.addActionListener { restartTunnels() }
         portHeaderRight.add(btnRestartTunnels)
-
-        val btnDeletePort = JButton("🗑 Remove Selected")
-        btnDeletePort.toolTipText = "Delete selected port forward from list"
-        btnDeletePort.addActionListener { removeSelectedPort() }
-        portHeaderRight.add(btnDeletePort)
 
         portHeader.add(portHeaderLeft, BorderLayout.WEST)
         portHeader.add(portHeaderRight, BorderLayout.EAST)
@@ -729,7 +719,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
         // Right click popup menu
         val popupMenu = JPopupMenu()
-        val itemOpenBrowser = JMenuItem("🌐 Open in Browser (localhost:port)")
+        val itemOpenBrowser = JMenuItem("Open in Browser (localhost:port)", AllIcons.General.Web)
         itemOpenBrowser.addActionListener {
             val r = portsTable.selectedRow
             val profile = settings.activeProfileOrNull ?: return@addActionListener
@@ -741,7 +731,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
                 } catch (_: Exception) {}
             }
         }
-        val itemCopyLocal = JMenuItem("📋 Copy Local Address")
+        val itemCopyLocal = JMenuItem("Copy Local Address", AllIcons.Actions.Copy)
         itemCopyLocal.addActionListener {
             val r = portsTable.selectedRow
             val profile = settings.activeProfileOrNull ?: return@addActionListener
@@ -751,7 +741,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
                 Toolkit.getDefaultToolkit().systemClipboard.setContents(sel, sel)
             }
         }
-        val itemRestartTunnel = JMenuItem("🔄 Restart This Tunnel")
+        val itemRestartTunnel = JMenuItem("Restart This Tunnel", AllIcons.Actions.Restart)
         itemRestartTunnel.addActionListener {
             val r = portsTable.selectedRow
             val profile = settings.activeProfileOrNull ?: return@addActionListener
@@ -762,7 +752,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
                 updatePortsTableData()
             }
         }
-        val itemRemove = JMenuItem("🗑 Remove Port")
+        val itemRemove = JMenuItem("Remove Port (Delete)", AllIcons.General.Remove)
         itemRemove.addActionListener { removeSelectedPort() }
 
         popupMenu.add(itemOpenBrowser)
@@ -772,6 +762,13 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         popupMenu.add(itemRemove)
 
         portsTable.componentPopupMenu = popupMenu
+        portsTable.addKeyListener(object : java.awt.event.KeyAdapter() {
+            override fun keyPressed(e: java.awt.event.KeyEvent) {
+                if (e.keyCode == java.awt.event.KeyEvent.VK_DELETE || e.keyCode == java.awt.event.KeyEvent.VK_BACK_SPACE) {
+                    removeSelectedPort()
+                }
+            }
+        })
         portsBox.add(JBScrollPane(portsTable), BorderLayout.CENTER)
 
         panel.add(portsBox, BorderLayout.CENTER)
@@ -792,14 +789,14 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         terminalInputField.toolTipText = "Enter command and press Enter (e.g. htop, ls -la, df -h, ps aux)"
         terminalInputField.addActionListener { executeTerminalInput() }
 
-        val btnExec = JButton("Execute (Enter)")
+        val btnExec = JButton("Execute", AllIcons.Actions.Execute)
         btnExec.addActionListener { executeTerminalInput() }
 
         inputPanel.add(JBLabel("remote:~# "), BorderLayout.WEST)
         inputPanel.add(terminalInputField, BorderLayout.CENTER)
         inputPanel.add(btnExec, BorderLayout.EAST)
 
-        val btnOpenIdeaTerminal = JButton("💻 Open in IntelliJ Terminal")
+        val btnOpenIdeaTerminal = JButton("Open in Terminal", RemoteFlowIcons.TERMINAL)
         btnOpenIdeaTerminal.font = btnOpenIdeaTerminal.font.deriveFont(Font.BOLD)
         btnOpenIdeaTerminal.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
         btnOpenIdeaTerminal.toolTipText = "Open terminal in IntelliJ IDEA and connect via SSH"
@@ -808,7 +805,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
             uz.remote.flow.terminal.RemoteTerminalHelper.openTerminal(project, p)
         }
 
-        val btnLaunchExternal = JButton("🚀 External Terminal")
+        val btnLaunchExternal = JButton("External Terminal", AllIcons.Actions.Forward)
         btnLaunchExternal.toolTipText = "Launch SSH session in external terminal window"
         btnLaunchExternal.addActionListener {
             val p = settings.activeProfileOrNull ?: return@addActionListener
@@ -1334,7 +1331,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val statusText = JBLabel("Ready")
         statusText.font = statusText.font.deriveFont(Font.PLAIN, 11f)
 
-        val btnCheck = JButton("🔍 Check Port")
+        val btnCheck = JButton("Check Port", AllIcons.Actions.Search)
         btnCheck.toolTipText = "Check whether port is free or occupied (lsof / fuser / ss)"
         btnCheck.addActionListener {
             val port = portField.text.trim()
@@ -1361,7 +1358,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         }
         right.add(btnCheck)
 
-        val btnKill = JButton("🛑 Kill Process on Port")
+        val btnKill = JButton("Kill Process on Port", AllIcons.Actions.Cancel)
         btnKill.font = btnKill.font.deriveFont(Font.BOLD)
         btnKill.foreground = JBColor.RED
         btnKill.toolTipText = "Forcefully terminate process occupying this port (SIGKILL)"
@@ -1423,17 +1420,17 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         topRow.add(branchPanel, BorderLayout.CENTER)
 
         val btnRow = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
-        val btnRefreshGit = JButton("⟳ Check Git")
+        val btnRefreshGit = JButton("Check Git", AllIcons.Actions.Refresh)
         btnRefreshGit.toolTipText = "Check remote Git branch and status"
         btnRefreshGit.addActionListener { checkRemoteGitStatus() }
         btnRow.add(btnRefreshGit)
 
-        val btnGitPull = JButton("⬇ Git Pull")
+        val btnGitPull = JButton("Git Pull", AllIcons.Actions.CheckOut)
         btnGitPull.toolTipText = "Pull latest changes on server (git pull)"
         btnGitPull.addActionListener { executeRemoteGitPull() }
         btnRow.add(btnGitPull)
 
-        val btnGitStashPull = JButton("🔄 Stash & Pull")
+        val btnGitStashPull = JButton("Stash & Pull", AllIcons.Actions.Rollback)
         btnGitStashPull.toolTipText = "Stash remote changes and pull"
         btnGitStashPull.addActionListener { executeRemoteGitStashPull() }
         btnRow.add(btnGitStashPull)

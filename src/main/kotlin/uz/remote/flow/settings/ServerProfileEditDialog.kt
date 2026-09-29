@@ -1,5 +1,6 @@
 package uz.remote.flow.settings
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.project.Project
@@ -40,21 +41,21 @@ class ServerProfileEditDialog(
 
     private val localFolderField = TextFieldWithBrowseButton()
     private val remotePathField = JBTextField(profile.remoteProjectPath)
-    private val btnBrowseRemote = JButton("📁 Browse...")
+    private val btnBrowseRemote = JButton("Browse...", AllIcons.Nodes.Folder)
     private val btnResetTemplate = JButton("⟳")
 
     private val excludePatternsField = JBTextField()
     private val btnResetExcludes = JButton("⟳")
     private val rsyncPathField = TextFieldWithBrowseButton(JBTextField())
-    private val btnAutoDetectRsync = JButton("🔍 Auto")
+    private val btnAutoDetectRsync = JButton("Auto", AllIcons.Actions.Search)
 
     private val javaHomeField = JBTextField(profile.javaHome)
-    private val btnAutoDetectJava = JButton("🔍 Auto")
+    private val btnAutoDetectJava = JButton("Auto", AllIcons.Actions.Search)
     private val runCommandField = JBTextField(profile.runCommand)
     private val debugCommandField = JBTextField(profile.debugCommand)
 
     private val chkAutoSyncOnSave = com.intellij.ui.components.JBCheckBox("⚡ Auto-Sync on Save (automatically upload files on save)", profile.autoSyncOnSave)
-    private val btnTestConn = JButton("⚡ Test Connection")
+    private val btnTestConn = JButton("Test Connection", AllIcons.Actions.Execute)
 
     init {
         title = if (isNew) "Add New Server Profile" else "Edit Server Profile: " + profile.name
@@ -307,7 +308,7 @@ class ServerProfileEditDialog(
         rsyncPanel.add(rsyncPathField, BorderLayout.CENTER)
         val rsyncBtns = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0))
         rsyncBtns.add(btnAutoDetectRsync)
-        val btnOpenIdeRsync = JButton("⚙ IntelliJ Rsync")
+        val btnOpenIdeRsync = JButton("IntelliJ Rsync", AllIcons.General.Settings)
         btnOpenIdeRsync.toolTipText = "IntelliJ IDEA official Rsync settings (Tools -> Rsync)"
         btnOpenIdeRsync.addActionListener {
             try {

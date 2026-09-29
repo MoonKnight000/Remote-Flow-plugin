@@ -1,5 +1,6 @@
 package uz.remote.flow.ui
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.ShowSettingsUtil
@@ -29,11 +30,11 @@ class RemoteFlowLogPanel(private val project: Project) : JPanel(BorderLayout(0, 
     private val logService = RemoteFlowLogService.getInstance(project)
     private val settings = RemoteFlowSettings.getInstance(project)
 
-    private val btnClearLogs = JButton("Clear Logs")
+    private val btnClearLogs = JButton("Clear", AllIcons.Actions.GC)
     private val filterTextField = JBTextField()
     private val serverComboBox = JComboBox<String>()
     private val categoryComboBox = JComboBox<LogCategory>(LogCategory.values())
-    private val btnEditConfig = JButton("Edit Config")
+    private val btnEditConfig = JButton("Settings", AllIcons.General.Settings)
 
     init {
         border = JBUI.Borders.empty(4)

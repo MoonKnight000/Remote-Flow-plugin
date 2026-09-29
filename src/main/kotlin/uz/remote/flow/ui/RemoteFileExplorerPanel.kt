@@ -1,6 +1,7 @@
 package uz.remote.flow.ui
 
 import com.intellij.diff.DiffContentFactory
+import com.intellij.icons.AllIcons
 import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.openapi.Disposable
@@ -54,16 +55,16 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
 
     // Path & Controls
     private val pathField = JBTextField()
-    private val btnUp = JButton("⬆ Up")
-    private val btnHome = JButton("🏠 Project Root")
-    private val btnGo = JButton("Go")
-    private val btnRefresh = JButton("⟳ Refresh")
+    private val btnUp = JButton("Up", AllIcons.Nodes.UpFolder)
+    private val btnHome = JButton("Project Root", AllIcons.Nodes.HomeFolder)
+    private val btnGo = JButton("Go", AllIcons.Actions.Forward)
+    private val btnRefresh = JButton("Refresh", AllIcons.Actions.Refresh)
 
     // Filter & Primary Actions
     private val searchField = JBTextField()
-    private val btnUpload = JButton("📤 Upload")
-    private val btnNewFolder = JButton("📁+ Folder")
-    private val btnNewFile = JButton("📄+ File")
+    private val btnUpload = JButton("Upload", AllIcons.Actions.Upload)
+    private val btnNewFolder = JButton("Folder", AllIcons.Actions.NewFolder)
+    private val btnNewFile = JButton("File", AllIcons.FileTypes.Text)
 
     // Table View
     private val tableColumns = arrayOf("Name", "Size", "Type", "Last Modified", "Permissions")
@@ -477,7 +478,7 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
 
         if (!item.isDirectory) {
             // 1. Open in IDE
-            val itemOpenIdea = JMenuItem("📄 Open in IDE")
+            val itemOpenIdea = JMenuItem("Open in IDE", AllIcons.Actions.Edit)
             itemOpenIdea.font = itemOpenIdea.font.deriveFont(Font.BOLD, 12f)
             itemOpenIdea.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
             itemOpenIdea.toolTipText = "Open file in IntelliJ editor (saving with Ctrl+S automatically syncs to remote server)"
@@ -485,18 +486,18 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
             menu.add(itemOpenIdea)
 
             // 2. View / Edit in Viewer Modal
-            val itemViewModal = JMenuItem("👁 View / Edit (Viewer Modal)")
+            val itemViewModal = JMenuItem("View / Edit (Viewer Modal)", AllIcons.Actions.Preview)
             itemViewModal.addActionListener { openInViewerDialog(item) }
             menu.add(itemViewModal)
 
             // 3. Diff with Local File
-            val itemDiff = JMenuItem("🔍 Compare with Local File (Diff)")
+            val itemDiff = JMenuItem("Compare with Local File (Diff)", AllIcons.Actions.Diff)
             itemDiff.addActionListener { compareWithLocalFile(item) }
             menu.add(itemDiff)
 
             // 4. Remote Config Manager
             if (item.name.startsWith(".env") || item.name.endsWith(".yml") || item.name.endsWith(".yaml") || item.name.endsWith(".properties") || item.name.endsWith(".json")) {
-                val itemConfigManager = JMenuItem("⚙ Edit in Remote Config Manager (.env / .yml)")
+                val itemConfigManager = JMenuItem("Edit in Remote Config Manager (.env / .yml)", AllIcons.FileTypes.Config)
                 itemConfigManager.addActionListener { openInConfigManager(item) }
                 menu.add(itemConfigManager)
             }
@@ -504,39 +505,39 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
             menu.addSeparator()
 
             // 5. Download
-            val itemDownload = JMenuItem("📥 Download to Local...")
+            val itemDownload = JMenuItem("Download to Local...", AllIcons.Actions.Download)
             itemDownload.addActionListener { downloadSelectedFile(item) }
             menu.add(itemDownload)
 
             // 6. Upload & Replace
-            val itemUploadReplace = JMenuItem("📤 Upload & Replace with Local File...")
+            val itemUploadReplace = JMenuItem("Upload & Replace with Local File...", AllIcons.Actions.Upload)
             itemUploadReplace.addActionListener { uploadAndReplaceFile(item) }
             menu.add(itemUploadReplace)
 
             menu.addSeparator()
         } else if (!item.isParentDir) {
-            val itemOpenFolder = JMenuItem("📂 Open Directory")
+            val itemOpenFolder = JMenuItem("Open Directory", AllIcons.Nodes.Folder)
             itemOpenFolder.font = itemOpenFolder.font.deriveFont(Font.BOLD)
             itemOpenFolder.addActionListener { loadDirectory(item.path) }
             menu.add(itemOpenFolder)
 
             menu.addSeparator()
 
-            val itemUploadHere = JMenuItem("📤 Upload File Here...")
+            val itemUploadHere = JMenuItem("Upload File Here...", AllIcons.Actions.Upload)
             itemUploadHere.addActionListener { uploadFileToDir(item.path) }
             menu.add(itemUploadHere)
 
-            val itemNewSubFolder = JMenuItem("📁+ New Subfolder...")
+            val itemNewSubFolder = JMenuItem("New Subfolder...", AllIcons.Actions.NewFolder)
             itemNewSubFolder.addActionListener { createNewFolderPrompt(item.path) }
             menu.add(itemNewSubFolder)
 
-            val itemNewSubFile = JMenuItem("📄+ New File Inside...")
+            val itemNewSubFile = JMenuItem("New File Inside...", AllIcons.FileTypes.Text)
             itemNewSubFile.addActionListener { createNewFilePrompt(item.path) }
             menu.add(itemNewSubFile)
 
             menu.addSeparator()
 
-            val itemDownloadFolder = JMenuItem("📥 Download Folder (as Zip)...")
+            val itemDownloadFolder = JMenuItem("Download Folder (as Zip)...", AllIcons.Actions.Download)
             itemDownloadFolder.addActionListener { downloadFolder(item) }
             menu.add(itemDownloadFolder)
 
@@ -544,26 +545,26 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         }
 
         if (!item.isParentDir) {
-            val itemRename = JMenuItem("✏ Rename...")
+            val itemRename = JMenuItem("Rename...", AllIcons.Actions.Edit)
             itemRename.addActionListener { renameItemPrompt(item) }
             menu.add(itemRename)
 
-            val itemDelete = JMenuItem("🗑 Delete")
+            val itemDelete = JMenuItem("Delete", AllIcons.General.Remove)
             itemDelete.foreground = JBColor.RED
             itemDelete.addActionListener { deleteItem(item) }
             menu.add(itemDelete)
             menu.addSeparator()
         }
 
-        val itemCopyPath = JMenuItem("📋 Copy Remote Path")
+        val itemCopyPath = JMenuItem("Copy Remote Path", AllIcons.Actions.Copy)
         itemCopyPath.addActionListener {
             val sel = StringSelection(item.path)
             Toolkit.getDefaultToolkit().systemClipboard.setContents(sel, sel)
-            statusLabel.text = "Yo'l buferga nusxalandi: ${item.path}"
+            statusLabel.text = "Path copied to clipboard: ${item.path}"
         }
         menu.add(itemCopyPath)
 
-        val itemRefresh = JMenuItem("⟳ Refresh Directory")
+        val itemRefresh = JMenuItem("Refresh Directory", AllIcons.Actions.Refresh)
         itemRefresh.addActionListener { refreshCurrentDirectory() }
         menu.add(itemRefresh)
 
@@ -574,29 +575,29 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         val menu = JPopupMenu()
         val curPath = pathField.text.trim().ifBlank { settings.activeProfile.remoteProjectPath }
 
-        val itemUpload = JMenuItem("📤 Upload File to Current Directory...")
+        val itemUpload = JMenuItem("Upload File to Current Directory...", AllIcons.Actions.Upload)
         itemUpload.addActionListener { uploadFileToCurrentDir() }
         menu.add(itemUpload)
 
-        val itemNewFolder = JMenuItem("📁+ New Folder...")
+        val itemNewFolder = JMenuItem("New Folder...", AllIcons.Actions.NewFolder)
         itemNewFolder.addActionListener { createNewFolderPrompt(curPath) }
         menu.add(itemNewFolder)
 
-        val itemNewFile = JMenuItem("📄+ New File...")
+        val itemNewFile = JMenuItem("New File...", AllIcons.FileTypes.Text)
         itemNewFile.addActionListener { createNewFilePrompt(curPath) }
         menu.add(itemNewFile)
 
         menu.addSeparator()
 
-        val itemCopyCur = JMenuItem("📋 Copy Current Path ($curPath)")
+        val itemCopyCur = JMenuItem("Copy Current Path ($curPath)", AllIcons.Actions.Copy)
         itemCopyCur.addActionListener {
             val sel = StringSelection(curPath)
             Toolkit.getDefaultToolkit().systemClipboard.setContents(sel, sel)
-            statusLabel.text = "Yo'l buferga nusxalandi: $curPath"
+            statusLabel.text = "Path copied to clipboard: $curPath"
         }
         menu.add(itemCopyCur)
 
-        val itemRefresh = JMenuItem("⟳ Refresh")
+        val itemRefresh = JMenuItem("Refresh", AllIcons.Actions.Refresh)
         itemRefresh.addActionListener { refreshCurrentDirectory() }
         menu.add(itemRefresh)
 

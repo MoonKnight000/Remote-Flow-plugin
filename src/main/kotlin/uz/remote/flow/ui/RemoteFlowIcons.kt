@@ -15,4 +15,7 @@ object RemoteFlowIcons {
 
     @JvmField
     val CLOUD_CONNECTING: Icon = IconLoader.getIcon("/icons/cloudConnecting.svg", RemoteFlowIcons::class.java)
+
+    @JvmField
+    val TERMINAL: Icon = IconLoader.getIcon("/icons/terminal.svg", RemoteFlowIcons::class.java)
 }

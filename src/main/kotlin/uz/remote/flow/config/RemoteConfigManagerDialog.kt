@@ -1,5 +1,6 @@
 package uz.remote.flow.config
 
+import com.intellij.icons.AllIcons
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
@@ -38,6 +39,7 @@ class RemoteConfigManagerDialog(
     private val logService = RemoteFlowLogService.getInstance(project)
 
     private val defaultCandidates = listOf(
+        "gradle.properties",
         ".env",
         ".env.local",
         ".env.production",
@@ -52,9 +54,10 @@ class RemoteConfigManagerDialog(
     )
 
     private val fileComboBox = JComboBox<String>()
-    private val btnScanServer = JButton("🔍 Scan Server")
-    private val btnReload = JButton("⟳ Reload")
+    private val btnScanServer = JButton("Scan Server", AllIcons.Actions.Search)
+    private val btnReload = JButton("Reload", AllIcons.Actions.Refresh)
     private val fileStatusLabel = JBLabel("Checking...")
+    private val chkExcludeFromSync = JBCheckBox("🛡 Protect from sync overwrite", false)
 
     private val tabbedPane = JBTabbedPane()
 
@@ -65,8 +68,7 @@ class RemoteConfigManagerDialog(
     }
     private val configTable = JBTable(tableModel)
     private val chkShowSecrets = JBCheckBox("👁 Show Secrets", false)
-    private val btnAddKey = JButton("➕ Add Key")
-    private val btnRemoveKey = JButton("➖ Remove Key")
+    private val btnAddKey = JButton("Add Key", AllIcons.General.Add)
 
     // Tab 2: Raw Editor
     private val rawTextArea = JTextArea()
@@ -74,7 +76,7 @@ class RemoteConfigManagerDialog(
 
     // Options
     private val chkCreateBackup = JBCheckBox("Create automatic backup (.bak) on remote server", true)
-    private val btnSave = JButton("💾 Save to Remote Server")
+    private val btnSave = JButton("Save to Server", AllIcons.Actions.MenuSaveall)
 
     private var currentRemoteFullPath = ""
     private var isUpdatingContent = false
@@ -148,7 +150,12 @@ class RemoteConfigManagerDialog(
         }
         kvLeft.add(chkShowSecrets)
 
-        val kvRight = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 2))
+        val kvRight = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 2))
+        val lblTableHint = JBLabel("💡 Right-click or Del to manage")
+        lblTableHint.font = lblTableHint.font.deriveFont(Font.ITALIC, 11f)
+        lblTableHint.foreground = JBColor.GRAY
+        kvRight.add(lblTableHint)
+
         btnAddKey.addActionListener {
             val k = Messages.showInputDialog(panel, "Enter key name:", "Add New Key", null)
             if (!k.isNullOrBlank()) {
@@ -157,15 +164,7 @@ class RemoteConfigManagerDialog(
                 syncTableToRaw()
             }
         }
-        btnRemoveKey.addActionListener {
-            val sel = configTable.selectedRow
-            if (sel in 0 until tableModel.rowCount) {
-                tableModel.removeRow(sel)
-                syncTableToRaw()
-            }
-        }
         kvRight.add(btnAddKey)
-        kvRight.add(btnRemoveKey)
 
         kvTopBar.add(kvLeft, BorderLayout.WEST)
         kvTopBar.add(kvRight, BorderLayout.EAST)
@@ -193,6 +192,73 @@ class RemoteConfigManagerDialog(
             }
         })
 
+        // Delete key listener
+        configTable.addKeyListener(object : java.awt.event.KeyAdapter() {
+            override fun keyPressed(e: java.awt.event.KeyEvent) {
+                if (e.keyCode == java.awt.event.KeyEvent.VK_DELETE || e.keyCode == java.awt.event.KeyEvent.VK_BACK_SPACE) {
+                    val sel = configTable.selectedRow
+                    if (sel in 0 until tableModel.rowCount) {
+                        tableModel.removeRow(sel)
+                        syncTableToRaw()
+                    }
+                }
+            }
+        })
+
+        // Right-click context popup menu
+        val configPopup = JPopupMenu()
+        val itemAdd = JMenuItem("Add Key...", AllIcons.General.Add)
+        itemAdd.addActionListener {
+            val k = Messages.showInputDialog(panel, "Enter key name:", "Add New Key", null)
+            if (!k.isNullOrBlank()) {
+                val isSec = isSensitiveKey(k)
+                tableModel.addRow(arrayOf(k.trim(), "", if (isSec) "🔒 Secret" else "Text"))
+                syncTableToRaw()
+            }
+        }
+        configPopup.add(itemAdd)
+
+        configPopup.addPopupMenuListener(object : javax.swing.event.PopupMenuListener {
+            override fun popupMenuWillBecomeVisible(e: javax.swing.event.PopupMenuEvent?) {
+                configPopup.removeAll()
+                configPopup.add(itemAdd)
+
+                val sel = configTable.selectedRow
+                if (sel in 0 until tableModel.rowCount) {
+                    configPopup.addSeparator()
+                    val key = tableModel.getValueAt(sel, 0)?.toString() ?: ""
+                    val value = tableModel.getValueAt(sel, 1)?.toString() ?: ""
+
+                    val itemCopyVal = JMenuItem("Copy Value", AllIcons.Actions.Copy)
+                    itemCopyVal.addActionListener {
+                        Toolkit.getDefaultToolkit().systemClipboard.setContents(java.awt.datatransfer.StringSelection(value), null)
+                    }
+                    configPopup.add(itemCopyVal)
+
+                    val itemCopyKey = JMenuItem("Copy Key ($key)", AllIcons.Actions.Copy)
+                    itemCopyKey.addActionListener {
+                        Toolkit.getDefaultToolkit().systemClipboard.setContents(java.awt.datatransfer.StringSelection(key), null)
+                    }
+                    configPopup.add(itemCopyKey)
+
+                    configPopup.addSeparator()
+
+                    val itemRemove = JMenuItem("Remove Key (Delete)", AllIcons.General.Remove)
+                    itemRemove.addActionListener {
+                        val currentSel = configTable.selectedRow
+                        if (currentSel in 0 until tableModel.rowCount) {
+                            tableModel.removeRow(currentSel)
+                            syncTableToRaw()
+                        }
+                    }
+                    configPopup.add(itemRemove)
+                }
+            }
+            override fun popupMenuWillBecomeInvisible(e: javax.swing.event.PopupMenuEvent?) {}
+            override fun popupMenuCanceled(e: javax.swing.event.PopupMenuEvent?) {}
+        })
+        configTable.componentPopupMenu = configPopup
+
         tableModel.addTableModelListener { e ->
             if (!isUpdatingContent && e.column in 0..1) {
                 syncTableToRaw()
@@ -200,7 +266,7 @@ class RemoteConfigManagerDialog(
         }
 
         kvPanel.add(JBScrollPane(configTable), BorderLayout.CENTER)
-        tabbedPane.addTab("📋 Key-Value Table", kvPanel)
+        tabbedPane.addTab("Key-Value Table", AllIcons.Nodes.Editorconfig, kvPanel)
 
         // Tab 2: Raw Text Editor
         val rawPanel = JPanel(BorderLayout(0, 4))
@@ -222,7 +288,7 @@ class RemoteConfigManagerDialog(
         rawBottomBar.add(rawStatusLabel, BorderLayout.WEST)
         rawPanel.add(rawBottomBar, BorderLayout.SOUTH)
 
-        tabbedPane.addTab("📝 Raw Editor (YAML / ENV)", rawPanel)
+        tabbedPane.addTab("Raw Editor (YAML / ENV / Properties)", AllIcons.FileTypes.Text, rawPanel)
 
         // Sync when tabs switch
         tabbedPane.addChangeListener {
@@ -243,9 +309,27 @@ class RemoteConfigManagerDialog(
         val panel = JPanel(BorderLayout(8, 0))
         panel.border = JBUI.Borders.empty(4, 0)
 
-        val left = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
+        val left = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0))
         chkCreateBackup.toolTipText = "Creates a .bak copy on server before saving changes"
         left.add(chkCreateBackup)
+
+        chkExcludeFromSync.toolTipText = "Exclude this file in Server Profile so local sync will NEVER overwrite this server file"
+        chkExcludeFromSync.addActionListener {
+            val fileName = getSelectedRelativeFileName()
+            val currentExcludes = uz.remote.flow.ssh.parseExcludeList(profile.excludePatterns).toMutableList()
+            if (chkExcludeFromSync.isSelected) {
+                if (!uz.remote.flow.ssh.isPathExcluded(fileName, fileName, currentExcludes)) {
+                    currentExcludes.add(fileName)
+                    profile.excludePatterns = currentExcludes.joinToString(", ")
+                    connectionManager.notifyUser("Remote Flow Protection", "'$fileName' is now protected and excluded from local sync overwrite!", NotificationType.INFORMATION)
+                }
+            } else {
+                currentExcludes.removeAll { it.equals(fileName, ignoreCase = true) }
+                profile.excludePatterns = currentExcludes.joinToString(", ")
+            }
+            updateExcludeCheckboxState()
+        }
+        left.add(chkExcludeFromSync)
 
         val right = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0))
         btnSave.font = btnSave.font.deriveFont(Font.BOLD)
@@ -282,9 +366,23 @@ class RemoteConfigManagerDialog(
     }
 
     private fun resolveSelectedPath(): String {
-        val rel = (fileComboBox.editor.item?.toString() ?: fileComboBox.selectedItem?.toString() ?: ".env").trim()
+        val rel = (fileComboBox.editor.item?.toString() ?: fileComboBox.selectedItem?.toString() ?: "gradle.properties").trim()
         val base = profile.remoteProjectPath.trimEnd('/')
         return if (rel.startsWith("/")) rel else "$base/$rel"
+    }
+
+    private fun getSelectedRelativeFileName(): String {
+        val rel = (fileComboBox.editor.item?.toString() ?: fileComboBox.selectedItem?.toString() ?: "gradle.properties").trim()
+        return rel.substringAfterLast('/')
+    }
+
+    private fun updateExcludeCheckboxState() {
+        val fileName = getSelectedRelativeFileName()
+        val excludes = uz.remote.flow.ssh.parseExcludeList(profile.excludePatterns)
+        val isExcluded = uz.remote.flow.ssh.isPathExcluded(fileName, fileName, excludes)
+        chkExcludeFromSync.isSelected = isExcluded
+        chkExcludeFromSync.text = if (isExcluded) "🛡 Excluded from sync (Protected)" else "🛡 Exclude from sync (Protect from overwrite)"
+        chkExcludeFromSync.foreground = if (isExcluded) JBColor(Color(16, 185, 129), Color(16, 185, 129)) else JBColor.foreground()
     }
 
     private fun loadSelectedConfigFile() {
@@ -292,6 +390,7 @@ class RemoteConfigManagerDialog(
         currentRemoteFullPath = fullPath
         fileStatusLabel.text = "Loading..."
         fileStatusLabel.foreground = JBColor.GRAY
+        updateExcludeCheckboxState()
 
         fileManager.readFileContent(profile, fullPath) { content, err ->
             ApplicationManager.getApplication().invokeLater {
@@ -418,6 +517,8 @@ class RemoteConfigManagerDialog(
 
             if (isYaml) {
                 sb.append("$k: \"$v\"\n")
+            } else if (currentFileName.endsWith(".properties")) {
+                sb.append("$k=$v\n")
             } else {
                 sb.append("$k=\"$v\"\n")
             }

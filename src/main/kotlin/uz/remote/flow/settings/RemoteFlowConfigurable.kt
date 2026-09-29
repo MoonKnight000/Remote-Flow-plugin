@@ -1,5 +1,6 @@
 package uz.remote.flow.settings
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.options.Configurable
@@ -52,17 +53,17 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
     private val excludePatternsField = JBTextField()
     private val btnResetExcludes = JButton("⟳ Default")
     private val rsyncPathField = TextFieldWithBrowseButton(JBTextField())
-    private val btnAutoDetectRsync = JButton("🔍 Auto-Detect")
+    private val btnAutoDetectRsync = JButton("Auto-Detect", AllIcons.Actions.Search)
 
     private val runCommandField = JBTextField()
     private val debugCommandField = JBTextField()
 
     private val javaHomeField = JBTextField()
-    private val btnAutoDetectJava = JButton("🔍 Detect Remote Java")
+    private val btnAutoDetectJava = JButton("Detect Remote Java", AllIcons.Actions.Search)
     private val chkAutoSyncOnSave = JBCheckBox("⚡ Auto-Sync on Save (automatically upload files to server on Ctrl+S)", false)
 
     private val autoReconnectCheck = JBCheckBox("Auto-Reconnect & Keep-Alive", true)
-    private val btnTestConnection = JButton("⚡ Test Connection")
+    private val btnTestConnection = JButton("Test Connection", AllIcons.Actions.Execute)
 
     private lateinit var portsTableModel: DefaultTableModel
     private lateinit var portsTable: JBTable
@@ -497,18 +498,57 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         portsTable.columnModel.getColumn(0).cellEditor = DefaultCellEditor(JComboBox(arrayOf("Local -> Host", "Host -> Local")))
         portsTable.columnModel.getColumn(0).preferredWidth = 110
 
-        val portToolbar = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
-        val btnAddPort = JButton("➕ Add Port")
+        val portToolbar = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0))
+        val lblPortHint = JBLabel("💡 Right-click or Del to remove")
+        lblPortHint.font = lblPortHint.font.deriveFont(Font.ITALIC, 11f)
+        lblPortHint.foreground = JBColor.GRAY
+        portToolbar.add(lblPortHint)
+
+        val btnAddPort = JButton("Add Port", AllIcons.General.Add)
         btnAddPort.addActionListener {
             portsTableModel.addRow(arrayOf("Local -> Host", "8080", "8080", "Custom Service"))
         }
-        val btnDelPort = JButton("🗑 Remove Port")
-        btnDelPort.addActionListener {
-            val r = portsTable.selectedRow
-            if (r >= 0) portsTableModel.removeRow(r)
-        }
         portToolbar.add(btnAddPort)
-        portToolbar.add(btnDelPort)
+
+        portsTable.addKeyListener(object : java.awt.event.KeyAdapter() {
+            override fun keyPressed(e: java.awt.event.KeyEvent) {
+                if (e.keyCode == java.awt.event.KeyEvent.VK_DELETE || e.keyCode == java.awt.event.KeyEvent.VK_BACK_SPACE) {
+                    val r = portsTable.selectedRow
+                    if (r in 0 until portsTableModel.rowCount) {
+                        portsTableModel.removeRow(r)
+                    }
+                }
+            }
+        })
+
+        val portPopup = JPopupMenu()
+        val itemAdd = JMenuItem("Add Port Forward", AllIcons.General.Add)
+        itemAdd.addActionListener {
+            portsTableModel.addRow(arrayOf("Local -> Host", "8080", "8080", "Custom Service"))
+        }
+        portPopup.add(itemAdd)
+
+        portPopup.addPopupMenuListener(object : javax.swing.event.PopupMenuListener {
+            override fun popupMenuWillBecomeVisible(e: javax.swing.event.PopupMenuEvent?) {
+                portPopup.removeAll()
+                portPopup.add(itemAdd)
+                val r = portsTable.selectedRow
+                if (r in 0 until portsTableModel.rowCount) {
+                    portPopup.addSeparator()
+                    val itemRemove = JMenuItem("Remove Port (Delete)", AllIcons.General.Remove)
+                    itemRemove.addActionListener {
+                        val currentSel = portsTable.selectedRow
+                        if (currentSel in 0 until portsTableModel.rowCount) {
+                            portsTableModel.removeRow(currentSel)
+                        }
+                    }
+                    portPopup.add(itemRemove)
+                }
+            }
+            override fun popupMenuWillBecomeInvisible(e: javax.swing.event.PopupMenuEvent?) {}
+            override fun popupMenuCanceled(e: javax.swing.event.PopupMenuEvent?) {}
+        })
+        portsTable.componentPopupMenu = portPopup
 
         portsBox.add(portToolbar, BorderLayout.NORTH)
         portsBox.add(JBScrollPane(portsTable), BorderLayout.CENTER)

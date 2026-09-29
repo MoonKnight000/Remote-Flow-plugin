@@ -1,5 +1,6 @@
 package uz.remote.flow.system
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
@@ -17,6 +18,8 @@ import uz.remote.flow.ssh.RemoteConnectionManager
 import uz.remote.flow.ssh.ServerProfile
 import java.awt.*
 import java.awt.datatransfer.StringSelection
+import java.awt.event.KeyAdapter
+import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.text.SimpleDateFormat
@@ -39,12 +42,11 @@ class RemoteTaskManagerDialog(
 
     private val searchField = JBTextField()
     private val sortComboBox = JComboBox(arrayOf("Sort by CPU % (Highest)", "Sort by RAM % (Highest)", "Sort by Name (A-Z)"))
-    private val btnRefresh = JButton("⟳ Refresh")
+    private val btnRefresh = JButton("Refresh", AllIcons.Actions.Refresh)
     private val chkAutoRefresh = JBCheckBox("Auto (5s)")
     private val lblStatus = JBLabel("Loading processes...")
 
-    private val btnTerminate = JButton("🛑 Terminate (SIGTERM)")
-    private val btnForceKill = JButton("⚡ Force Kill (SIGKILL)")
+    private val btnTerminate = JButton("End Task (Delete)", AllIcons.Actions.Suspend)
 
     private lateinit var tableModel: DefaultTableModel
     private lateinit var table: JBTable
@@ -154,24 +156,24 @@ class RemoteTaskManagerDialog(
 
         // Context Menu
         val popup = JPopupMenu()
-        val itemSigterm = JMenuItem("🛑 Terminate (SIGTERM - 15)")
+        val itemSigterm = JMenuItem("Terminate (SIGTERM - 15)", AllIcons.Actions.Suspend)
         itemSigterm.addActionListener { killSelectedProcess(force = false) }
         popup.add(itemSigterm)
 
-        val itemSigkill = JMenuItem("⚡ Force Kill (SIGKILL - 9)")
+        val itemSigkill = JMenuItem("Force Kill (SIGKILL - 9)", AllIcons.Actions.Cancel)
         itemSigkill.addActionListener { killSelectedProcess(force = true) }
         popup.add(itemSigkill)
 
         popup.addSeparator()
 
-        val itemCopyPid = JMenuItem("📋 Copy PID")
+        val itemCopyPid = JMenuItem("Copy PID", AllIcons.Actions.Copy)
         itemCopyPid.addActionListener {
             val pid = getSelectedPid() ?: return@addActionListener
             Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(pid), null)
         }
         popup.add(itemCopyPid)
 
-        val itemCopyCmd = JMenuItem("📋 Copy Full Command")
+        val itemCopyCmd = JMenuItem("Copy Full Command", AllIcons.Actions.Copy)
         itemCopyCmd.addActionListener {
             val cmd = getSelectedCommand() ?: return@addActionListener
             Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(cmd), null)
@@ -179,6 +181,13 @@ class RemoteTaskManagerDialog(
         popup.add(itemCopyCmd)
 
         table.componentPopupMenu = popup
+        table.addKeyListener(object : KeyAdapter() {
+            override fun keyPressed(e: KeyEvent) {
+                if (e.keyCode == KeyEvent.VK_DELETE || e.keyCode == KeyEvent.VK_BACK_SPACE) {
+                    killSelectedProcess(force = false)
+                }
+            }
+        })
         table.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
                 if (e.clickCount == 2) {
@@ -203,10 +212,10 @@ class RemoteTaskManagerDialog(
         btnTerminate.addActionListener { killSelectedProcess(force = false) }
         actionsLeft.add(btnTerminate)
 
-        btnForceKill.toolTipText = "Send uncatchable kill signal (SIGKILL 9) to forcefully terminate selected process"
-        btnForceKill.foreground = JBColor.RED
-        btnForceKill.addActionListener { killSelectedProcess(force = true) }
-        actionsLeft.add(btnForceKill)
+        val lblHint = JBLabel("💡 Tip: Right-click row for Force Kill (SIGKILL) or copy command")
+        lblHint.font = lblHint.font.deriveFont(Font.ITALIC, 11f)
+        lblHint.foreground = JBColor.GRAY
+        actionsLeft.add(lblHint)
 
         bottomPanel.add(actionsLeft, BorderLayout.WEST)
 
