@@ -77,6 +77,7 @@ class RemoteFlowStatusBarWidget(private val project: Project) : CustomStatusBarW
         val active = settings.activeProfileOrNull
 
         if (active == null) {
+            iconLabel.icon = RemoteFlowIcons.CLOUD_DISCONNECTED
             textLabel.text = "Remote Flow: No server"
             textLabel.foreground = JBColor.GRAY
             panel.toolTipText = "Remote Flow: No server configured. Click to configure."
@@ -85,11 +86,13 @@ class RemoteFlowStatusBarWidget(private val project: Project) : CustomStatusBarW
         }
 
         if (connMgr.isConnected) {
-            textLabel.text = "${active.name} ●"
+            iconLabel.icon = RemoteFlowIcons.CLOUD_CONNECTED
+            textLabel.text = "${active.name} [Connected]"
             textLabel.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
             panel.toolTipText = "Remote Flow: Connected to ${active.name} (${active.host}:${active.port}). Click for quick actions."
         } else {
-            textLabel.text = "${active.name} ○"
+            iconLabel.icon = RemoteFlowIcons.CLOUD_DISCONNECTED
+            textLabel.text = "${active.name} [Offline]"
             textLabel.foreground = JBColor.GRAY
             panel.toolTipText = "Remote Flow: Disconnected (${active.name}). Click to connect or switch server."
         }
@@ -137,7 +140,7 @@ class RemoteFlowStatusBarWidget(private val project: Project) : CustomStatusBarW
             group.add(object : AnAction("🔄 Fast Sync All Files") {
                 override fun actionPerformed(e: AnActionEvent) {
                     syncMgr.syncSingleServer(active, {}, { ok ->
-                        if (ok) connMgr.notifyUser("Remote Flow", "Fast Sync yakunlandi!")
+                        if (ok) connMgr.notifyUser("Remote Flow", "Fast Sync completed!")
                     })
                 }
             })

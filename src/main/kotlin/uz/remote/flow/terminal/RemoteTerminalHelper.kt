@@ -26,7 +26,7 @@ object RemoteTerminalHelper {
 
         val sshCmd = buildSshCommand(profile)
 
-        // Agar parol bilan autentifikatsiya bo'lsa, parolni buferga nusxalaymiz
+        // If password authentication is used, copy password to clipboard
         if (profile.authType == AuthType.PASSWORD && profile.password.isNotBlank()) {
             try {
                 val sel = StringSelection(profile.password)
@@ -42,11 +42,11 @@ object RemoteTerminalHelper {
             val openedInIde = tryOpenInIdeTerminal(project, profile, sshCmd)
             if (openedInIde) {
                 val pwdNote = if (profile.authType == AuthType.PASSWORD && profile.password.isNotBlank()) {
-                    "\nParol buferga nusxalandi (Ctrl+V bilan kiritishingiz mumkin)."
+                    "\nPassword copied to clipboard (paste with Ctrl+V)."
                 } else ""
                 RemoteConnectionManager.getInstance(project).notifyUser(
                     "Remote Flow: SSH Terminal",
-                    "IntelliJ Terminal ochildi va ${profile.name} serveriga ulanmoqda...$pwdNote",
+                    "IntelliJ Terminal opened. Connecting to ${profile.name}...$pwdNote",
                     NotificationType.INFORMATION
                 )
             } else {
@@ -191,14 +191,14 @@ object RemoteTerminalHelper {
         try {
             Runtime.getRuntime().exec(arrayOf("cmd.exe", "/c", cmd))
             RemoteConnectionManager.getInstance(project).notifyUser(
-                "Remote Flow: Tashqi Terminal",
-                "${profile.name} uchun tashqi terminal oynasi ochildi.",
+                "Remote Flow: External Terminal",
+                "External terminal window opened for ${profile.name}.",
                 NotificationType.INFORMATION
             )
         } catch (e: Exception) {
             RemoteConnectionManager.getInstance(project).notifyUser(
                 "Remote Flow",
-                "Terminalni ochishda xatolik: ${e.message}",
+                "Error opening terminal: ${e.message}",
                 NotificationType.ERROR
             )
         }

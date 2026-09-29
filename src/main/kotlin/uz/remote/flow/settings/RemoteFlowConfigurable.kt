@@ -59,7 +59,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
 
     private val javaHomeField = JBTextField()
     private val btnAutoDetectJava = JButton("🔍 Detect Remote Java")
-    private val chkAutoSyncOnSave = JBCheckBox("⚡ Auto-Sync on Save (Ctrl+S bosilganda serverga avtomatik yuklash)", false)
+    private val chkAutoSyncOnSave = JBCheckBox("⚡ Auto-Sync on Save (automatically upload files to server on Ctrl+S)", false)
 
     private val autoReconnectCheck = JBCheckBox("Auto-Reconnect & Keep-Alive", true)
     private val btnTestConnection = JButton("⚡ Test Connection")
@@ -106,14 +106,14 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
             FileChooserDescriptorFactory.createSingleFileDescriptor()
         )
 
-        btnResetRemoteTemplate.toolTipText = "Shablon bo'yicha qayta tiklash (/<user>/remote-flow/<local-folder>)"
+        btnResetRemoteTemplate.toolTipText = "Reset to default template (/<user>/remote-flow/<local-folder>)"
         btnResetRemoteTemplate.addActionListener {
             val u = userField.text.trim().ifBlank { "root" }
             val fName = resolveLocalFolderName()
             remotePathField.text = if (u == "root") "/root/remote-flow/$fName" else "/home/$u/remote-flow/$fName"
         }
 
-        btnResetExcludes.toolTipText = "Default istisnolar ro'yxatini tiklash"
+        btnResetExcludes.toolTipText = "Reset to default exclude patterns"
         btnResetExcludes.addActionListener {
             excludePatternsField.text = uz.remote.flow.ssh.defaultExcludes()
         }
@@ -125,17 +125,17 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
             FileChooserDescriptorFactory.createSingleFileDescriptor()
         )
 
-        (rsyncPathField.textField as JBTextField).emptyText.text = "IntelliJ IDEA Rsync sozlamasidan (avtomatik)"
-        btnAutoDetectRsync.toolTipText = "IntelliJ IDEA yoki tizimdan rsync.exe ni aniqlash"
+        (rsyncPathField.textField as JBTextField).emptyText.text = "From IntelliJ IDEA Rsync settings (automatic)"
+        btnAutoDetectRsync.toolTipText = "Auto-detect rsync.exe from IntelliJ IDEA or system PATH"
         btnAutoDetectRsync.addActionListener {
             val detected = uz.remote.flow.ssh.detectRsyncPath()
             if (detected.isNotBlank()) {
                 rsyncPathField.text = detected
                 val idePath = uz.remote.flow.sync.IntelliJRsyncConfigProvider.getRsyncConfig().rsyncPath
-                val origin = if (detected.equals(idePath, ignoreCase = true)) " (IntelliJ IDEA Tools -> Rsync sozlamasidan)" else ""
-                Messages.showInfoMessage(project, "Rsync topildi$origin:\n$detected", "Rsync Aniqlash")
+                val origin = if (detected.equals(idePath, ignoreCase = true)) " (from IntelliJ IDEA Tools -> Rsync settings)" else ""
+                Messages.showInfoMessage(project, "Rsync detected$origin:\n$detected", "Rsync Detection")
             } else {
-                Messages.showWarningDialog(project, "Tizimdan rsync topilmadi. Rsync o'rnatilgan yo'lini 'Browse...' orqali tanlashingiz mumkin yoki SFTP avtomatik ishlatiladi.", "Rsync Topilmadi")
+                Messages.showWarningDialog(project, "Rsync executable not found in system PATH. You can browse manually or SFTP will be used automatically.", "Rsync Not Found")
             }
         }
 
@@ -188,16 +188,16 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
             connectionManager.testConnection(current, checkRemoteDir = targetRemote) { ok, dirExists, msg ->
                 ApplicationManager.getApplication().invokeLater {
                     if (!ok) {
-                        Messages.showErrorDialog(project, msg, "Ulanishda Xatolik")
+                        Messages.showErrorDialog(project, msg, "Connection Error")
                         return@invokeLater
                     }
 
                     if (targetRemote.isNotBlank() && !dirExists) {
                         promptCreateRemoteDir(current, targetRemote)
                     } else if (targetRemote.isNotBlank()) {
-                        Messages.showInfoMessage(project, "$msg\n\nMasofaviy papka mavjud: $targetRemote", "Ulanish Muvaffaqiyatli")
+                        Messages.showInfoMessage(project, "$msg\n\nRemote directory exists: $targetRemote", "Connection Successful")
                     } else {
-                        Messages.showInfoMessage(project, msg, "Ulanish Muvaffaqiyatli")
+                        Messages.showInfoMessage(project, msg, "Connection Successful")
                     }
                 }
             }
@@ -247,7 +247,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
                     }
                 }
             }
-            .addExtraAction(object : com.intellij.openapi.actionSystem.AnAction("Duplicate Profile", "Nusxa olish", com.intellij.icons.AllIcons.Actions.Copy) {
+            .addExtraAction(object : com.intellij.openapi.actionSystem.AnAction("Duplicate Profile", "Duplicate selected profile", com.intellij.icons.AllIcons.Actions.Copy) {
                 override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent) {
                     saveCurrentSelection()
                     val cur = getCurrentProfile() ?: return
@@ -312,20 +312,20 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
     private fun promptCreateRemoteDir(profile: ServerProfile, remotePath: String, onFinished: ((Boolean) -> Unit)? = null) {
         val choice = Messages.showYesNoDialog(
             project,
-            "Serverda masofaviy papka topilmadi:\n$remotePath\n\nUshbu papkani serverda hozir yaratishni xohlaysizmi?",
-            "Masofaviy Papka Topilmadi",
-            "Ha, Yaratish",
-            "Yo'q",
+            "Remote directory was not found on server:\n$remotePath\n\nWould you like to create this directory on the remote server now?",
+            "Remote Directory Not Found",
+            "Yes, Create",
+            "No",
             Messages.getQuestionIcon()
         )
         if (choice == Messages.YES) {
             connectionManager.createDirectory(profile, remotePath) { success, err ->
                 ApplicationManager.getApplication().invokeLater {
                     if (success) {
-                        Messages.showInfoMessage(project, "Masofaviy papka serverda muvaffaqiyatli yaratildi:\n$remotePath", "Papka Yaratildi")
+                        Messages.showInfoMessage(project, "Remote directory created successfully on server:\n$remotePath", "Directory Created")
                         onFinished?.invoke(true)
                     } else {
-                        Messages.showErrorDialog(project, "Papkani yaratishda xatolik yuz berdi: " + (err ?: "Ruxsat yo'q"), "Xatolik")
+                        Messages.showErrorDialog(project, "Failed to create directory: " + (err ?: "Permission denied"), "Error")
                         onFinished?.invoke(false)
                     }
                 }
@@ -390,7 +390,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         // Row 7: Exclude Paths
         gbc.gridx = 0; gbc.gridy = 7; gbc.weightx = 0.0; form.add(JBLabel("Exclude Paths:"), gbc)
         val excludePanel = JPanel(BorderLayout(4, 0))
-        excludePatternsField.toolTipText = "Masalan: .git, .gradle, build, .idea, out, target, node_modules, *.log"
+        excludePatternsField.toolTipText = "e.g.: .git, .gradle, build, .idea, out, target, node_modules, *.log"
         excludePanel.add(excludePatternsField, BorderLayout.CENTER)
         excludePanel.add(btnResetExcludes, BorderLayout.EAST)
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(excludePanel, gbc)
@@ -399,12 +399,12 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         // Row 8: Rsync Executable
         gbc.gridx = 0; gbc.gridy = 8; gbc.weightx = 0.0; form.add(JBLabel("Rsync Executable:"), gbc)
         val rsyncPanel = JPanel(BorderLayout(4, 0))
-        rsyncPathField.textField.toolTipText = "Bo'sh qoldirilsa IntelliJ IDEA sozlamasidan yoki tizimdan avtomatik ishlatiladi"
+        rsyncPathField.textField.toolTipText = "If empty, detected automatically from IntelliJ IDEA or system PATH"
         rsyncPanel.add(rsyncPathField, BorderLayout.CENTER)
         val rsyncBtns = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0))
         rsyncBtns.add(btnAutoDetectRsync)
         val btnOpenIdeRsync = JButton("⚙ IntelliJ Rsync")
-        btnOpenIdeRsync.toolTipText = "IntelliJ IDEA rasmiy Rsync sozlamalari (Tools -> Rsync)"
+        btnOpenIdeRsync.toolTipText = "IntelliJ IDEA Rsync settings (Tools -> Rsync)"
         btnOpenIdeRsync.addActionListener {
             try {
                 ShowSettingsUtil.getInstance().showSettingsDialog(project, "rsyncConfigurable")
@@ -422,29 +422,29 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         // Row 9: Remote Java (JAVA_HOME)
         gbc.gridx = 0; gbc.gridy = 9; gbc.weightx = 0.0; form.add(JBLabel("Remote Java:"), gbc)
         val javaPanel = JPanel(BorderLayout(4, 0))
-        javaHomeField.emptyText.text = "Masofaviy Java yo'li / JAVA_HOME (masalan: /usr/lib/jvm/java-17-openjdk-amd64)"
+        javaHomeField.emptyText.text = "Remote Java path / JAVA_HOME (e.g.: /usr/lib/jvm/java-17-openjdk-amd64)"
         javaPanel.add(javaHomeField, BorderLayout.CENTER)
         val javaBtns = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0))
-        btnAutoDetectJava.toolTipText = "Serverdagi barcha o'rnatilgan Java versiyalarini avtomatik aniqlash"
+        btnAutoDetectJava.toolTipText = "Auto-detect installed Java versions on remote server"
         btnAutoDetectJava.addActionListener {
             saveCurrentSelection()
             val cur = getCurrentProfile() ?: return@addActionListener
             btnAutoDetectJava.isEnabled = false
-            btnAutoDetectJava.text = "Qidirilmoqda..."
+            btnAutoDetectJava.text = "Detecting..."
             connectionManager.detectRemoteJava(cur) { list ->
                 ApplicationManager.getApplication().invokeLater {
                     btnAutoDetectJava.isEnabled = true
                     btnAutoDetectJava.text = "🔍 Detect Remote Java"
                     if (list.isEmpty()) {
-                        Messages.showInfoMessage(project, "Masofaviy serverda Java avtomatik aniqlanmadi. Yo'lini qo'lda kiriting (masalan: /usr/lib/jvm/java-17-openjdk-amd64)", "Remote Java")
+                        Messages.showInfoMessage(project, "Could not auto-detect Java on remote server. Please specify the path manually (e.g.: /usr/lib/jvm/java-17-openjdk-amd64)", "Remote Java")
                     } else if (list.size == 1) {
                         javaHomeField.text = list[0]
                         cur.javaHome = list[0]
-                        Messages.showInfoMessage(project, "Remote Java muvaffaqiyatli aniqlandi:\n${list[0]}", "Java Topildi")
+                        Messages.showInfoMessage(project, "Remote Java detected successfully:\n${list[0]}", "Java Detected")
                     } else {
                         val chosen = Messages.showEditableChooseDialog(
-                            "Serverda quyidagi Java versiyalari topildi. Keraklisini tanlang:",
-                            "Remote Java Tanlash",
+                            "Found the following Java versions on server. Select one:",
+                            "Select Remote Java",
                             Messages.getQuestionIcon(),
                             list.toTypedArray(),
                             list[0],
@@ -473,7 +473,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         gbc.gridwidth = 1
 
         // Row 12: Auto-Sync on Save
-        chkAutoSyncOnSave.toolTipText = "Fayl tahrirlanib saqlanganda (Ctrl+S) avtomatik serverga sinxronizatsiya qilish"
+        chkAutoSyncOnSave.toolTipText = "Automatically sync files to server whenever saved (Ctrl+S)"
         gbc.gridx = 0; gbc.gridy = 12; gbc.gridwidth = 4; gbc.weightx = 1.0
         form.add(chkAutoSyncOnSave, gbc)
 

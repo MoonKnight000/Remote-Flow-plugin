@@ -105,14 +105,14 @@ class RemoteDirectoryChooserDialog(
     private fun createNewFolder() {
         val folderName = Messages.showInputDialog(
             project,
-            "Yangi papka nomini kiriting:",
+            "Enter new directory name:",
             "New Remote Folder",
             Messages.getQuestionIcon()
         ) ?: return
 
         val cleanName = folderName.trim()
         if (cleanName.isEmpty() || cleanName.contains('/') || cleanName.contains(' ')) {
-            Messages.showErrorDialog(project, "Papka nomida bo'sh joy yoki / belgisi bo'lmasligi kerak!", "Xato")
+            Messages.showErrorDialog(project, "Directory name cannot contain spaces or '/' characters!", "Error")
             return
         }
 
@@ -129,7 +129,7 @@ class RemoteDirectoryChooserDialog(
                     if (code == 0) {
                         loadDirectory(fullPath)
                     } else {
-                        Messages.showErrorDialog(project, "Papkani yaratib bo'lmadi! Huquqlar (permissions)ni tekshiring.", "Xato")
+                        Messages.showErrorDialog(project, "Failed to create directory! Check user permissions.", "Error")
                     }
                 }
             }
@@ -161,7 +161,7 @@ class RemoteDirectoryChooserDialog(
                         dirs.forEach { dirListModel.addElement(it) }
                         statusLabel.text = "Directories found: " + dirs.size + " (Double click to enter)"
                     } else {
-                        statusLabel.text = "Folder bo'sh yoki o'qish huquqi yo'q (permission denied)."
+                        statusLabel.text = "Directory is empty or permission denied."
                     }
                 }
             }

@@ -133,11 +133,11 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         pathRow.border = IdeBorderFactory.createTitledBorder("Remote Directory Location", false)
 
         val navLeft = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
-        btnUp.toolTipText = "Bitta yuqoridagi papkaga o'tish"
+        btnUp.toolTipText = "Go to parent directory"
         btnUp.addActionListener { navigateUp() }
         navLeft.add(btnUp)
 
-        btnHome.toolTipText = "Loyiha asosiy papkasiga qaytish (remoteProjectPath)"
+        btnHome.toolTipText = "Return to project root directory (remoteProjectPath)"
         btnHome.addActionListener {
             val rootPath = settings.activeProfile.remoteProjectPath.ifBlank { "/" }
             pathField.text = rootPath
@@ -148,7 +148,7 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         pathRow.add(navLeft, BorderLayout.WEST)
 
         pathField.font = Font("Monospaced", Font.PLAIN, 12)
-        pathField.toolTipText = "Masofaviy papka yo'li (Enter bosing yoki 'Go' tugmasi)"
+        pathField.toolTipText = "Remote directory path (press Enter or click 'Go')"
         pathField.addActionListener { loadDirectory(pathField.text.trim()) }
         pathRow.add(pathField, BorderLayout.CENTER)
 
@@ -157,7 +157,7 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         navRight.add(btnGo)
 
         btnRefresh.font = btnRefresh.font.deriveFont(Font.BOLD)
-        btnRefresh.toolTipText = "Papkani qayta yuklash"
+        btnRefresh.toolTipText = "Reload directory"
         btnRefresh.addActionListener { refreshCurrentDirectory() }
         navRight.add(btnRefresh)
 
@@ -169,7 +169,7 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         val actionRow = JPanel(BorderLayout(6, 0))
         actionRow.border = JBUI.Borders.empty(2, 4)
 
-        searchField.emptyText.text = "🔍 Qidirish (filter files)..."
+        searchField.emptyText.text = "🔍 Filter files..."
         searchField.preferredSize = Dimension(180, 26)
         searchField.document.addDocumentListener(object : DocumentAdapter() {
             override fun textChanged(e: DocumentEvent) {
@@ -180,20 +180,20 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
 
         val buttonsPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
 
-        val hintLabel = JBLabel("💡 O'ng tugma (Right-Click) orqali to'liq menyu")
+        val hintLabel = JBLabel("💡 Right-click for full context menu")
         hintLabel.font = hintLabel.font.deriveFont(Font.ITALIC, 11f)
         hintLabel.foreground = JBColor.GRAY
         buttonsPanel.add(hintLabel)
 
-        btnUpload.toolTipText = "Kompyuterdan ushbu masofaviy papkaga fayl yuklash"
+        btnUpload.toolTipText = "Upload file from local computer to this remote directory"
         btnUpload.addActionListener { uploadFileToCurrentDir() }
         buttonsPanel.add(btnUpload)
 
-        btnNewFolder.toolTipText = "Yangi papka yaratish (mkdir)"
+        btnNewFolder.toolTipText = "Create new remote directory (mkdir)"
         btnNewFolder.addActionListener { createNewFolderPrompt() }
         buttonsPanel.add(btnNewFolder)
 
-        btnNewFile.toolTipText = "Yangi bo'sh fayl yaratish (touch)"
+        btnNewFile.toolTipText = "Create new remote file (touch)"
         btnNewFile.addActionListener { createNewFilePrompt() }
         buttonsPanel.add(btnNewFile)
 
@@ -283,7 +283,7 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
     private fun updateServerStatus() {
         val p = settings.activeProfileOrNull
         if (p == null || p.host.isBlank()) {
-            serverIndicatorLabel.text = "Server: Konfiguratsiya qilinmagan"
+            serverIndicatorLabel.text = "Server: Not configured"
             serverIndicatorLabel.foreground = JBColor.RED
         } else if (connectionManager.isConnected) {
             serverIndicatorLabel.text = "Server: 🟢 ${p.name} (${p.host})"
@@ -301,23 +301,22 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
     fun loadDirectory(targetPath: String) {
         val profile = settings.activeProfileOrNull
         if (profile == null || profile.host.isBlank()) {
-            statusLabel.text = "Server sozlanmagan. Avval server qo'shing."
+            statusLabel.text = "Server not configured. Please add a server first."
             return
         }
 
         val cleanPath = targetPath.trim().ifBlank { profile.remoteProjectPath }.ifBlank { "/" }
         pathField.text = cleanPath
-        statusLabel.text = "Yuklanmoqda: $cleanPath..."
+        statusLabel.text = "Loading: $cleanPath..."
 
         fileManager.listDirectory(profile, cleanPath) { items, err ->
             ApplicationManager.getApplication().invokeLater {
                 if (err != null && items.isEmpty()) {
-                    statusLabel.text = "Xatolik: $err"
+                    statusLabel.text = "Error: $err"
                     tableModel.rowCount = 0
                     allCurrentItems.clear()
                 } else {
                     allCurrentItems.clear()
-
                     // Add parent item if not at root
                     if (cleanPath != "/" && cleanPath.isNotBlank()) {
                         val parentPath = getParentPath(cleanPath)
@@ -339,7 +338,7 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
                     val folderCount = items.count { it.isDirectory }
                     val fileCount = items.size - folderCount
                     val totalBytes = items.filter { !it.isDirectory }.sumOf { it.size }
-                    statusLabel.text = "Jami: ${items.size} ta element ($folderCount ta papka, $fileCount ta fayl, ${uz.remote.flow.files.formatFileSize(totalBytes)})"
+                    statusLabel.text = "Total: ${items.size} items ($folderCount folders, $fileCount files, ${uz.remote.flow.files.formatFileSize(totalBytes)})"
 
                     rebuildTree(cleanPath, items)
                 }
@@ -481,7 +480,7 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
             val itemOpenIdea = JMenuItem("📄 Open in IDE")
             itemOpenIdea.font = itemOpenIdea.font.deriveFont(Font.BOLD, 12f)
             itemOpenIdea.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
-            itemOpenIdea.toolTipText = "Faylni IntelliJ muharririda ochish (Ctrl+S bilan serverda avtomatik saqlanadi)"
+            itemOpenIdea.toolTipText = "Open file in IntelliJ editor (saving with Ctrl+S automatically syncs to remote server)"
             itemOpenIdea.addActionListener { openInIntelliJEditor(item) }
             menu.add(itemOpenIdea)
 
@@ -633,12 +632,12 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
                     if (vFile != null) {
                         vFile.refresh(false, false)
                         FileEditorManager.getInstance(project).openFile(vFile, true)
-                        statusLabel.text = "Fayl IntelliJ muharririda ochildi: ${item.name} (Ctrl+S bilan serverda avtomatik saqlanadi)"
+                        statusLabel.text = "File opened in IntelliJ editor: ${item.name} (Ctrl+S automatically saves to server)"
                     } else {
                         openInViewerDialog(item)
                     }
                 } else {
-                    statusLabel.text = "Yuklab olishda xatolik: $err"
+                    statusLabel.text = "Download error: $err"
                     openInViewerDialog(item)
                 }
             }
@@ -649,16 +648,16 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         if (item.isDirectory || item.isParentDir) return
         val profile = settings.activeProfileOrNull ?: return
 
-        statusLabel.text = "Fayl o'qilmoqda: ${item.name}..."
+        statusLabel.text = "Reading file: ${item.name}..."
         fileManager.readFileContent(profile, item.path) { content, err ->
             ApplicationManager.getApplication().invokeLater {
                 if (content != null) {
                     val dialog = RemoteFileViewerDialog(project, profile, item.path, content)
                     dialog.show()
-                    statusLabel.text = "Fayl yopildi: ${item.name}"
+                    statusLabel.text = "File closed: ${item.name}"
                 } else {
-                    statusLabel.text = "Faylni ochib bo'lmadi: $err"
-                    Messages.showErrorDialog(project, "Fayl mazmunini o'qib bo'lmadi:\n$err", "Xatolik")
+                    statusLabel.text = "Failed to open file: $err"
+                    Messages.showErrorDialog(project, "Could not read file content:\n$err", "Error")
                 }
             }
         }
@@ -667,25 +666,25 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
     private fun downloadSelectedFile(item: RemoteFileInfo? = getSelectedFileInfo()) {
         val targetItem = item ?: return
         if (targetItem.isDirectory || targetItem.isParentDir) {
-            Messages.showWarningDialog(project, "Iltimos, yuklab olish uchun faylni tanlang (papka emas).", "Fayl Tanlanmagan")
+            Messages.showWarningDialog(project, "Please select a file to download (not a directory).", "No File Selected")
             return
         }
 
         val profile = settings.activeProfileOrNull ?: return
-        val descriptor = FileSaverDescriptor("Download Remote File", "Faylni saqlash joyini tanlang", targetItem.extension)
+        val descriptor = FileSaverDescriptor("Download Remote File", "Choose destination to save file", targetItem.extension)
         val dialog = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project)
         val baseVirtualDir = project.basePath?.let { LocalFileSystem.getInstance().findFileByPath(it) }
         val target = dialog.save(baseVirtualDir, targetItem.name) ?: return
 
-        statusLabel.text = "Yuklab olinmoqda: ${targetItem.name}..."
+        statusLabel.text = "Downloading: ${targetItem.name}..."
         fileManager.downloadFile(profile, targetItem.path, target.file) { success, err ->
             ApplicationManager.getApplication().invokeLater {
                 if (success) {
-                    statusLabel.text = "Yuklab olindi: ${targetItem.name}"
-                    Messages.showInfoMessage(project, "Fayl kompyuterga saqlandi:\n${target.file.absolutePath}", "Yuklab Olindi")
+                    statusLabel.text = "Downloaded: ${targetItem.name}"
+                    Messages.showInfoMessage(project, "File saved locally:\n${target.file.absolutePath}", "Download Complete")
                 } else {
-                    statusLabel.text = "Xatolik: $err"
-                    Messages.showErrorDialog(project, "Yuklab olishda xatolik: $err", "Xatolik")
+                    statusLabel.text = "Error: $err"
+                    Messages.showErrorDialog(project, "Error downloading file: $err", "Error")
                 }
             }
         }
@@ -695,20 +694,20 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         if (!folderItem.isDirectory || folderItem.isParentDir) return
         val profile = settings.activeProfileOrNull ?: return
 
-        val descriptor = FileSaverDescriptor("Download Remote Folder", "Papkani arxiv (.tar.gz) sifatida saqlash joyini tanlang", "tar.gz")
+        val descriptor = FileSaverDescriptor("Download Remote Folder", "Choose destination to save archive (.tar.gz)", "tar.gz")
         val dialog = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project)
         val baseVirtualDir = project.basePath?.let { LocalFileSystem.getInstance().findFileByPath(it) }
         val target = dialog.save(baseVirtualDir, "${folderItem.name}.tar.gz") ?: return
 
-        statusLabel.text = "Papka arxivlanib yuklab olinmoqda: ${folderItem.name}..."
+        statusLabel.text = "Archiving and downloading folder: ${folderItem.name}..."
         fileManager.downloadDirectoryAsArchive(profile, folderItem.path, target.file) { success, err ->
             ApplicationManager.getApplication().invokeLater {
                 if (success) {
-                    statusLabel.text = "Papka muvaffaqiyatli saqlandi: ${target.file.name}"
-                    Messages.showInfoMessage(project, "Papka arxiv sifatida kompyuterga saqlandi:\n${target.file.absolutePath}", "Yuklab Olindi")
+                    statusLabel.text = "Folder saved successfully: ${target.file.name}"
+                    Messages.showInfoMessage(project, "Folder archived and saved locally:\n${target.file.absolutePath}", "Download Complete")
                 } else {
-                    statusLabel.text = "Xatolik: $err"
-                    Messages.showErrorDialog(project, "Papkani yuklab olishda xatolik:\n$err", "Xatolik")
+                    statusLabel.text = "Error: $err"
+                    Messages.showErrorDialog(project, "Error downloading folder:\n$err", "Error")
                 }
             }
         }
@@ -720,7 +719,7 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
 
         val descriptor = FileChooserDescriptor(true, false, false, false, false, false)
         descriptor.title = "Upload & Replace: ${item.name}"
-        descriptor.description = "Serverdagi '${item.path}' faylini almashtirish uchun lokal faylni tanlang:"
+        descriptor.description = "Select local file to replace remote file '${item.path}':"
 
         val files = FileChooser.chooseFiles(descriptor, project, null)
         if (files.isEmpty()) return
@@ -728,21 +727,21 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
 
         val confirm = Messages.showYesNoDialog(
             project,
-            "Serverdagi '${item.name}' fayli tanlangan '${localFile.name}' bilan almashtiriladi.\n\nDavom etasizmi?",
-            "Faylni Almashtirishni Tasdiqlang",
+            "Remote file '${item.name}' will be replaced with local file '${localFile.name}'.\n\nDo you want to proceed?",
+            "Confirm File Replacement",
             Messages.getQuestionIcon()
         )
         if (confirm != Messages.YES) return
 
-        statusLabel.text = "Fayl almashtirilmoqda: ${item.name}..."
+        statusLabel.text = "Replacing file: ${item.name}..."
         fileManager.uploadFileToRemotePath(profile, localFile, item.path) { success, err ->
             ApplicationManager.getApplication().invokeLater {
                 if (success) {
-                    statusLabel.text = "Fayl muvaffaqiyatli almashtirildi: ${item.name}"
+                    statusLabel.text = "File successfully replaced: ${item.name}"
                     refreshCurrentDirectory()
                 } else {
-                    statusLabel.text = "Xatolik: $err"
-                    Messages.showErrorDialog(project, "Serverga yuklab bo'lmadi:\n$err", "Xatolik")
+                    statusLabel.text = "Error: $err"
+                    Messages.showErrorDialog(project, "Failed to upload to server:\n$err", "Error")
                 }
             }
         }
@@ -756,21 +755,21 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         val profile = settings.activeProfileOrNull ?: return
         val descriptor = FileChooserDescriptor(true, false, false, false, false, false)
         descriptor.title = "Upload File to Remote Directory"
-        descriptor.description = "Serverga yuklamoqchi bo'lgan faylni tanlang:"
+        descriptor.description = "Select file to upload to remote server:"
 
         val files = FileChooser.chooseFiles(descriptor, project, null)
         if (files.isEmpty()) return
         val localFile = File(files[0].path)
 
-        statusLabel.text = "Serverga yuklanmoqda: ${localFile.name}..."
+        statusLabel.text = "Uploading to server: ${localFile.name}..."
         fileManager.uploadFile(profile, localFile, remoteDir) { success, err ->
             ApplicationManager.getApplication().invokeLater {
                 if (success) {
-                    statusLabel.text = "Yuklandi: ${localFile.name}"
+                    statusLabel.text = "Uploaded: ${localFile.name}"
                     refreshCurrentDirectory()
                 } else {
-                    statusLabel.text = "Yuklashda xato: $err"
-                    Messages.showErrorDialog(project, "Serverga yuklab bo'lmadi:\n$err", "Xatolik")
+                    statusLabel.text = "Upload error: $err"
+                    Messages.showErrorDialog(project, "Failed to upload to server:\n$err", "Error")
                 }
             }
         }
@@ -779,14 +778,14 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
     private fun createNewFolderPrompt(parentDir: String = pathField.text.trim().trimEnd('/')) {
         val folderName = Messages.showInputDialog(
             project,
-            "Yangi papka nomini kiriting:",
+            "Enter new directory name:",
             "New Remote Folder",
             Messages.getQuestionIcon()
         ) ?: return
 
         val clean = folderName.trim()
         if (clean.isEmpty() || clean.contains('/') || clean.contains(' ')) {
-            Messages.showErrorDialog(project, "Papka nomida bo'sh joy yoki / belgisi bo'lmasin!", "Noto'g'ri Nom")
+            Messages.showErrorDialog(project, "Directory name cannot contain spaces or '/' characters!", "Invalid Name")
             return
         }
 
@@ -794,15 +793,15 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         val cleanParent = parentDir.ifBlank { "/" }
         val newPath = if (cleanParent == "/") "/$clean" else "$cleanParent/$clean"
 
-        statusLabel.text = "Papka yaratilmoqda: $clean..."
+        statusLabel.text = "Creating directory: $clean..."
         fileManager.createDirectory(profile, newPath) { success, err ->
             ApplicationManager.getApplication().invokeLater {
                 if (success) {
-                    statusLabel.text = "Papka yaratildi: $clean"
+                    statusLabel.text = "Directory created: $clean"
                     refreshCurrentDirectory()
                 } else {
-                    statusLabel.text = "Xatolik: $err"
-                    Messages.showErrorDialog(project, "Papkani yaratib bo'lmadi: $err", "Xatolik")
+                    statusLabel.text = "Error: $err"
+                    Messages.showErrorDialog(project, "Failed to create directory: $err", "Error")
                 }
             }
         }
@@ -811,14 +810,14 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
     private fun createNewFilePrompt(parentDir: String = pathField.text.trim().trimEnd('/')) {
         val fileName = Messages.showInputDialog(
             project,
-            "Yangi fayl nomini kiriting (masalan: application-dev.yml, test.sh):",
+            "Enter new file name (e.g., application-dev.yml, test.sh):",
             "New Remote File",
             Messages.getQuestionIcon()
         ) ?: return
 
         val clean = fileName.trim()
         if (clean.isEmpty() || clean.contains('/') || clean.contains(' ')) {
-            Messages.showErrorDialog(project, "Fayl nomida bo'sh joy yoki / belgisi bo'lmasin!", "Noto'g'ri Nom")
+            Messages.showErrorDialog(project, "File name cannot contain spaces or '/' characters!", "Invalid Name")
             return
         }
 
@@ -826,15 +825,15 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         val cleanParent = parentDir.ifBlank { "/" }
         val newPath = if (cleanParent == "/") "/$clean" else "$cleanParent/$clean"
 
-        statusLabel.text = "Fayl yaratilmoqda: $clean..."
+        statusLabel.text = "Creating file: $clean..."
         fileManager.createNewFile(profile, newPath) { success, err ->
             ApplicationManager.getApplication().invokeLater {
                 if (success) {
-                    statusLabel.text = "Fayl yaratildi: $clean"
+                    statusLabel.text = "File created: $clean"
                     refreshCurrentDirectory()
                 } else {
-                    statusLabel.text = "Xatolik: $err"
-                    Messages.showErrorDialog(project, "Fayl yaratib bo'lmadi: $err", "Xatolik")
+                    statusLabel.text = "Error: $err"
+                    Messages.showErrorDialog(project, "Failed to create file: $err", "Error")
                 }
             }
         }
@@ -843,7 +842,7 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
     private fun renameItemPrompt(item: RemoteFileInfo) {
         val newName = Messages.showInputDialog(
             project,
-            "'${item.name}' uchun yangi nom kiriting:",
+            "Enter new name for '${item.name}':",
             "Rename Remote Item",
             Messages.getQuestionIcon(),
             item.name,
@@ -857,15 +856,15 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         val parent = getParentPath(item.path)
         val newPath = if (parent == "/") "/$clean" else "$parent/$clean"
 
-        statusLabel.text = "Nom o'zgartirilmoqda: $clean..."
+        statusLabel.text = "Renaming: $clean..."
         fileManager.renamePath(profile, item.path, newPath) { success, err ->
             ApplicationManager.getApplication().invokeLater {
                 if (success) {
-                    statusLabel.text = "Nom o'zgartirildi: $clean"
+                    statusLabel.text = "Renamed: $clean"
                     refreshCurrentDirectory()
                 } else {
-                    statusLabel.text = "Xatolik: $err"
-                    Messages.showErrorDialog(project, "Nomni o'zgartirib bo'lmadi: $err", "Xatolik")
+                    statusLabel.text = "Error: $err"
+                    Messages.showErrorDialog(project, "Failed to rename: $err", "Error")
                 }
             }
         }
@@ -879,25 +878,25 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
     private fun deleteItem(item: RemoteFileInfo) {
         if (item.isParentDir) return
 
-        val typeText = if (item.isDirectory) "papka va uning barcha ichidagi fayllari" else "fayl"
+        val typeText = if (item.isDirectory) "directory and all of its contents" else "file"
         val confirm = Messages.showYesNoDialog(
             project,
-            "Serverdagi '${item.name}' $typeText butunlay o'chiriladi!\n\nDavom etasizmi?",
-            "O'chirishni Tasdiqlang",
+            "Remote '${item.name}' ($typeText) will be permanently deleted!\n\nDo you want to proceed?",
+            "Confirm Deletion",
             Messages.getWarningIcon()
         )
         if (confirm != Messages.YES) return
 
         val profile = settings.activeProfileOrNull ?: return
-        statusLabel.text = "O'chirilmoqda: ${item.name}..."
+        statusLabel.text = "Deleting: ${item.name}..."
         fileManager.deletePath(profile, item.path, item.isDirectory) { success, err ->
             ApplicationManager.getApplication().invokeLater {
                 if (success) {
-                    statusLabel.text = "O'chirildi: ${item.name}"
+                    statusLabel.text = "Deleted: ${item.name}"
                     refreshCurrentDirectory()
                 } else {
-                    statusLabel.text = "O'chirishda xatolik: $err"
-                    Messages.showErrorDialog(project, "O'chirishda xatolik: $err", "Xatolik")
+                    statusLabel.text = "Error deleting: $err"
+                    Messages.showErrorDialog(project, "Failed to delete: $err", "Error")
                 }
             }
         }
@@ -907,12 +906,12 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         val profile = settings.activeProfileOrNull ?: return
         if (item.isDirectory || item.isParentDir) return
 
-        statusLabel.text = "Fayl solishtirish uchun yuklanmoqda: ${item.name}..."
+        statusLabel.text = "Loading file for diff: ${item.name}..."
         fileManager.readFileContent(profile, item.path) { remoteContent, err ->
             ApplicationManager.getApplication().invokeLater {
                 if (err != null || remoteContent == null) {
-                    Messages.showErrorDialog(project, "Masofadagi faylni o'qib bo'lmadi:\n" + (err ?: "Noma'lum xatolik"), "Diff Xatolik")
-                    statusLabel.text = "Diff xatolik"
+                    Messages.showErrorDialog(project, "Could not read remote file:\n" + (err ?: "Unknown error"), "Diff Error")
+                    statusLabel.text = "Diff error"
                     return@invokeLater
                 }
 
@@ -931,19 +930,19 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
                 if (localFile == null) {
                     val descriptor = FileChooserDescriptor(true, false, false, false, false, false)
                         .withTitle("Compare with Local File")
-                        .withDescription("Solishtirish uchun lokal '${item.name}' faylini tanlang")
+                        .withDescription("Select local '${item.name}' file to compare with")
                     val chosen = FileChooser.chooseFile(descriptor, project, null)
                     if (chosen != null) {
                         localFile = File(chosen.path)
                     } else {
-                        statusLabel.text = "Diff bekor qilindi"
+                        statusLabel.text = "Diff cancelled"
                         return@invokeLater
                     }
                 }
 
                 val virtualLocal = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(localFile)
                 if (virtualLocal == null) {
-                    Messages.showErrorDialog(project, "Lokal fayl topilmadi: ${localFile.path}", "Diff Xatolik")
+                    Messages.showErrorDialog(project, "Local file not found: ${localFile.path}", "Diff Error")
                     return@invokeLater
                 }
 
@@ -961,9 +960,9 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
                     )
 
                     DiffManager.getInstance().showDiff(project, request)
-                    statusLabel.text = "Diff ochildi: ${item.name}"
+                    statusLabel.text = "Diff opened: ${item.name}"
                 } catch (ex: Exception) {
-                    Messages.showErrorDialog(project, "Diff viewer ochishda xatolik: " + (ex.message ?: ex.toString()), "Diff Xatolik")
+                    Messages.showErrorDialog(project, "Error opening diff viewer: " + (ex.message ?: ex.toString()), "Diff Error")
                 }
             }
         }

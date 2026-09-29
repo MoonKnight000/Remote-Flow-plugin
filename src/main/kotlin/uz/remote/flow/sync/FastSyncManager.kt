@@ -35,7 +35,7 @@ class FastSyncManager(private val project: Project) {
             onComplete(false)
             return
         }
-        onLog("[DRY-RUN PREVIEW] Masofadagi server bilan solishtirilmoqda: " + basePath + " -> " + profile.remoteProjectPath + "\n")
+        onLog("[DRY-RUN PREVIEW] Comparing with remote server: " + basePath + " -> " + profile.remoteProjectPath + "\n")
 
         parallelPool.submit {
             var tempAskPass: java.io.File? = null
@@ -86,7 +86,7 @@ class FastSyncManager(private val project: Project) {
                 val code = process.waitFor()
                 onComplete(code == 0)
             } catch (e: Exception) {
-                onLog("[DRY-RUN NOTE]: Rsync topilmadi yoki xato berdi (" + e.message + "). SSH orqali tekshirilmoqda.\n")
+                onLog("[DRY-RUN NOTE]: Rsync not found or failed (" + e.message + "). Checking via SSH.\n")
                 onComplete(false)
             } finally {
                 try { tempAskPass?.delete() } catch (_: Exception) {}
@@ -127,18 +127,18 @@ class FastSyncManager(private val project: Project) {
             var tempZip: java.io.File? = null
             try {
                 val hasRsync = checkRsync(profile)
-                val methodNotice = if (!hasRsync) "Rsync tizimda topilmadi" else "SFTP Archive Sync rejimi"
-                onLog("[SFTP SYNC -> " + profile.name + "] " + methodNotice + ". SSH/SFTP orqali sinxronlashtirilmoqda...\n")
+                val methodNotice = if (!hasRsync) "Rsync not found on system" else "SFTP Archive Sync mode"
+                onLog("[SFTP SYNC -> " + profile.name + "] " + methodNotice + ". Synchronizing via SSH/SFTP...\n")
                 val baseDir = java.io.File(basePath)
                 if (!baseDir.exists() || !baseDir.isDirectory) {
-                    onLog("[ERROR] Local papka mavjud emas: " + basePath + "\n")
+                    onLog("[ERROR] Local folder does not exist: " + basePath + "\n")
                     onComplete(false)
                     return@submit
                 }
 
                 val excludes = uz.remote.flow.ssh.parseExcludeList(profile.excludePatterns)
 
-                onLog("[SFTP SYNC] Loyiha fayllari paketlanmoqda (${excludes.size} ta exclude qoidasi bo'yicha)...\n")
+                onLog("[SFTP SYNC] Packaging project files (applying ${excludes.size} exclude rules)...\n")
                 tempZip = java.io.File.createTempFile("rf_sync_", ".zip")
 
                 var fileCount = 0
@@ -168,7 +168,7 @@ class FastSyncManager(private val project: Project) {
                 }
 
                 val sizeMb = String.format(java.util.Locale.US, "%.2f", tempZip.length() / (1024.0 * 1024.0))
-                onLog("[SFTP SYNC] $fileCount ta fayl arxivlandi ($sizeMb MB). Serverga yuklanmoqda...\n")
+                onLog("[SFTP SYNC] $fileCount files archived ($sizeMb MB). Uploading to server...\n")
 
                 val remoteTempZip = "/tmp/rf_sync_" + java.util.UUID.randomUUID().toString().take(8) + ".zip"
 
@@ -179,13 +179,13 @@ class FastSyncManager(private val project: Project) {
                     onProgress = onLog,
                     onComplete = { uploaded ->
                         if (!uploaded) {
-                            onLog("[ERROR] Arxiv serverga yuklanmadi!\n")
+                            onLog("[ERROR] Failed to upload archive to server!\n")
                             tempZip?.delete()
                             onComplete(false)
                             return@uploadFile
                         }
 
-                        onLog("[SFTP SYNC] Arxiv serverda ochilmoqda: " + profile.remoteProjectPath + "...\n")
+                        onLog("[SFTP SYNC] Extracting archive on server: " + profile.remoteProjectPath + "...\n")
                         val extractCmd = "mkdir -p \"" + profile.remoteProjectPath + "\" && " +
                                 "(which unzip >/dev/null 2>&1 && unzip -q -o \"" + remoteTempZip + "\" -d \"" + profile.remoteProjectPath + "\" || " +
                                 "python3 -m zipfile -e \"" + remoteTempZip + "\" \"" + profile.remoteProjectPath + "\" || " +
@@ -201,10 +201,10 @@ class FastSyncManager(private val project: Project) {
                             onComplete = { code ->
                                 tempZip?.delete()
                                 if (code == 0) {
-                                    onLog("[SYNC SUCCESS] $fileCount ta fayl " + profile.name + " serveriga muvaffaqiyatli sinxronlashtirildi!\n")
+                                    onLog("[SYNC SUCCESS] $fileCount files successfully synchronized to " + profile.name + "!\n")
                                     onComplete(true)
                                 } else {
-                                    onLog("[ERROR] Serverda arxivni ochib bo'lmadi (unzip yoki python topilmadi).\n")
+                                    onLog("[ERROR] Could not extract archive on server (unzip or python not found).\n")
                                     onComplete(false)
                                 }
                             }
@@ -240,7 +240,7 @@ class FastSyncManager(private val project: Project) {
             return
         }
 
-        onLog("[SYNC SPECIFIC -> " + profile.name + "] " + cleanRelative + " yuklanmoqda...\n")
+        onLog("[SYNC SPECIFIC -> " + profile.name + "] Uploading " + cleanRelative + "...\n")
         parallelPool.submit {
             var tempAskPass: java.io.File? = null
             try {
@@ -287,7 +287,7 @@ class FastSyncManager(private val project: Project) {
                         }
                         onComplete(true)
                     } else {
-                        onLog("[RSYNC NOTICE] Rsync xato berdi (code: $code). SFTP orqali yuklanmoqda...\n")
+                        onLog("[RSYNC NOTICE] Rsync returned error (code: $code). Uploading via SFTP...\n")
                         connectionManager.uploadFile(
                             profile = profile,
                             localFile = localFile,
@@ -302,7 +302,7 @@ class FastSyncManager(private val project: Project) {
                         )
                     }
                 } else {
-                    onLog("[SFTP SYNC] " + cleanRelative + " serverga uzatilmoqda...\n")
+                    onLog("[SFTP SYNC] Transferring " + cleanRelative + " to server...\n")
                     connectionManager.uploadFile(
                         profile = profile,
                         localFile = localFile,
@@ -313,9 +313,9 @@ class FastSyncManager(private val project: Project) {
                                 if (cleanRelative.endsWith("gradlew") || cleanRelative.endsWith(".sh") || cleanRelative.endsWith("mvnw")) {
                                     connectionManager.executeRemoteCommand("sed -i 's/\\r$//' \"$remoteTarget\" 2>/dev/null || true; chmod +x \"$remoteTarget\" 2>/dev/null || true", "", {}, {})
                                 }
-                                onLog("[SYNC SUCCESS] Fayl serverda yangilandi: " + cleanRelative + "\n")
+                                onLog("[SYNC SUCCESS] File updated on server: " + cleanRelative + "\n")
                             } else {
-                                onLog("[SYNC ERROR] Faylni uzatishda xatolik!\n")
+                                onLog("[SYNC ERROR] Failed to transfer file!\n")
                             }
                             onComplete(success)
                         }
@@ -335,7 +335,7 @@ class FastSyncManager(private val project: Project) {
         onLog: (String) -> Unit,
         onComplete: (Boolean) -> Unit
     ) {
-        onLog("[PARALLEL SYNC] Barcha " + profiles.size + " ta serverga parallel sinxronizatsiya boshlandi...\n")
+        onLog("[PARALLEL SYNC] Starting parallel synchronization for all " + profiles.size + " servers...\n")
 
         var successCount = 0
         val total = profiles.size
@@ -353,7 +353,7 @@ class FastSyncManager(private val project: Project) {
                         synchronized(this) {
                             if (success) successCount++
                             if (successCount == total) {
-                                onLog("[PARALLEL SYNC] Barcha serverlarga sinxronizatsiya muvaffaqiyatli yakunlandi!\n")
+                                onLog("[PARALLEL SYNC] Synchronization completed successfully for all servers!\n")
                                 onComplete(true)
                             }
                         }
@@ -482,8 +482,8 @@ class FastSyncManager(private val project: Project) {
                 val exe = resolveRsyncExecutable(profile)
                 val ideConfig = IntelliJRsyncConfigProvider.getRsyncConfig()
                 val isIdeRsync = exe.equals(ideConfig.rsyncPath, ignoreCase = true)
-                val origin = if (isIdeRsync) "IntelliJ IDEA Rsync sozlamalari orqali ($exe)" else exe
-                onLog("[RSYNC SYNC -> " + profile.name + "] Rsync topildi: $origin. Tezkor sinxronizatsiya boshlandi...\n")
+                val origin = if (isIdeRsync) "IntelliJ IDEA Rsync configuration ($exe)" else exe
+                onLog("[RSYNC SYNC -> " + profile.name + "] Rsync found: $origin. Starting fast sync...\n")
 
                 val rsyncCmd = mutableListOf(exe)
                 val options = buildBaseRsyncOptions(profile)
@@ -533,16 +533,16 @@ class FastSyncManager(private val project: Project) {
                         workingDir = "",
                         onOutput = {},
                         onComplete = {
-                            onLog("[SYNC SUCCESS] Rsync orqali barcha fayllar serverga muvaffaqiyatli sinxronlandi!\n")
+                            onLog("[SYNC SUCCESS] All files successfully synchronized to server via rsync!\n")
                             onComplete(true)
                         }
                     )
                 } else {
-                    onLog("[RSYNC NOTICE] Rsync xatolik qaytardi (code: $code). Avtomatik ravishda SFTP Archive Sync rejimiga o'tilmoqda...\n")
+                    onLog("[RSYNC NOTICE] Rsync returned error (code: $code). Falling back to SFTP Archive Sync mode...\n")
                     runSftpArchiveSync(profile, localDir, onLog, onComplete)
                 }
             } catch (e: Exception) {
-                onLog("[RSYNC NOTICE] Rsync ishga tushmadi (" + (e.message ?: e.toString()) + "). SFTP Archive Sync rejimiga o'tilmoqda...\n")
+                onLog("[RSYNC NOTICE] Rsync failed to start (" + (e.message ?: e.toString()) + "). Falling back to SFTP Archive Sync mode...\n")
                 runSftpArchiveSync(profile, localDir, onLog, onComplete)
             } finally {
                 try { tempAskPass?.delete() } catch (_: Exception) {}

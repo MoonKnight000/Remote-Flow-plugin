@@ -12,7 +12,7 @@ import uz.remote.flow.ssh.RemoteConnectionManager
 import uz.remote.flow.sync.FastSyncManager
 import uz.remote.flow.ui.RemoteFlowIcons
 
-class RemoteFlowConnectAction : AnAction("Connect / Disconnect Server", "Serverga ulanish yoki aloqani uzish", RemoteFlowIcons.REMOTE_FLOW) {
+class RemoteFlowConnectAction : AnAction("Connect / Disconnect Server", "Connect or disconnect active remote server", RemoteFlowIcons.REMOTE_FLOW) {
     override fun update(e: AnActionEvent) {
         val project = e.project
         if (project == null) {
@@ -40,22 +40,22 @@ class RemoteFlowConnectAction : AnAction("Connect / Disconnect Server", "Serverg
 
         if (connMgr.isConnected) {
             connMgr.disconnect()
-            connMgr.notifyUser("Remote Flow", "Server bilan aloqa uzildi: ${p.name}")
+            connMgr.notifyUser("Remote Flow", "Disconnected from server: ${p.name}")
         } else {
             connMgr.connect(
                 profile = p,
                 onSuccess = {
-                    connMgr.notifyUser("Remote Flow", "Muvaffaqiyatli ulandi: ${p.name}")
+                    connMgr.notifyUser("Remote Flow", "Successfully connected to: ${p.name}")
                 },
                 onError = { err ->
-                    connMgr.notifyUser("Remote Flow: Ulanish xatosi", err.message ?: err.toString(), NotificationType.ERROR)
+                    connMgr.notifyUser("Remote Flow: Connection Error", err.message ?: err.toString(), NotificationType.ERROR)
                 }
             )
         }
     }
 }
 
-class RemoteFlowSyncAction : AnAction("Sync Project to Remote", "Loyiha kodlarini faol serverga yuklash", RemoteFlowIcons.REMOTE_FLOW) {
+class RemoteFlowSyncAction : AnAction("Sync Project to Remote", "Upload project files to active server", RemoteFlowIcons.REMOTE_FLOW) {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val syncMgr = FastSyncManager(project)
@@ -63,22 +63,22 @@ class RemoteFlowSyncAction : AnAction("Sync Project to Remote", "Loyiha kodlarin
         val settings = RemoteFlowSettings.getInstance(project)
         val p = settings.activeProfile
 
-        connMgr.notifyUser("Remote Flow: Sinxronizatsiya", "${p.name} serveriga kodlar yuklanmoqda...")
+        connMgr.notifyUser("Remote Flow: Sync", "Uploading project files to ${p.name}...")
         syncMgr.syncSingleServer(
             profile = p,
             onLog = {},
             onComplete = { success ->
                 if (success) {
-                    connMgr.notifyUser("Remote Flow: Tayyor", "Barcha fayllar serverga muvaffaqiyatli yuklandi!", NotificationType.INFORMATION)
+                    connMgr.notifyUser("Remote Flow: Sync Ready", "All files synchronized to server successfully!", NotificationType.INFORMATION)
                 } else {
-                    connMgr.notifyUser("Remote Flow: Xato", "Sinxronizatsiyada xatolik yuz berdi. Console jurnalini ko'ring.", NotificationType.WARNING)
+                    connMgr.notifyUser("Remote Flow: Sync Error", "Synchronization encountered errors. Check execution logs.", NotificationType.WARNING)
                 }
             }
         )
     }
 }
 
-class RemoteFlowSyncSelectionAction : AnAction("Sync Selected File/Folder to Remote", "Tanlangan fayl yoki papkani serverga yuklash", RemoteFlowIcons.REMOTE_FLOW) {
+class RemoteFlowSyncSelectionAction : AnAction("Sync Selected File/Folder to Remote", "Upload selected file or directory to remote server", RemoteFlowIcons.REMOTE_FLOW) {
     override fun update(e: AnActionEvent) {
         val project = e.project
         val file = e.getData(CommonDataKeys.VIRTUAL_FILE)
@@ -110,23 +110,23 @@ class RemoteFlowSyncSelectionAction : AnAction("Sync Selected File/Folder to Rem
         val settings = RemoteFlowSettings.getInstance(project)
         val p = settings.activeProfile
 
-        connMgr.notifyUser("Remote Flow", "'$relPath' fayli ${p.name} serveriga yuklanmoqda...")
+        connMgr.notifyUser("Remote Flow", "Uploading '$relPath' to ${p.name}...")
         syncMgr.syncSpecificPath(
             profile = p,
             relativePath = relPath,
             onLog = {},
             onComplete = { success ->
                 if (success) {
-                    connMgr.notifyUser("Remote Flow", "'$relPath' serverga muvaffaqiyatli yuklandi!", NotificationType.INFORMATION)
+                    connMgr.notifyUser("Remote Flow", "'$relPath' uploaded successfully!", NotificationType.INFORMATION)
                 } else {
-                    connMgr.notifyUser("Remote Flow: Xato", "'$relPath' yuklashda xatolik bo'ldi.", NotificationType.WARNING)
+                    connMgr.notifyUser("Remote Flow: Error", "Failed to upload '$relPath'.", NotificationType.WARNING)
                 }
             }
         )
     }
 }
 
-class RemoteFlowRunAction : AnAction("Run on Remote Server", "Masofaviy serverda build qilib ishga tushirish", RemoteFlowIcons.REMOTE_FLOW) {
+class RemoteFlowRunAction : AnAction("Run on Remote Server", "Build and run application on remote server", RemoteFlowIcons.REMOTE_FLOW) {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val tw = ToolWindowManager.getInstance(project).getToolWindow("RemoteFlow")
@@ -137,11 +137,11 @@ class RemoteFlowRunAction : AnAction("Run on Remote Server", "Masofaviy serverda
             val p = settings.activeProfile
 
             if (!connMgr.isConnected) {
-                connMgr.notifyUser("Remote Flow", "Serverga ulanilmagan! Avval ulaning.", NotificationType.WARNING)
+                connMgr.notifyUser("Remote Flow", "Not connected to server! Please connect first.", NotificationType.WARNING)
                 return@show
             }
 
-            connMgr.notifyUser("Remote Flow", "Kodlar yuklanmoqda va serverda ishga tushirilmoqda...")
+            connMgr.notifyUser("Remote Flow", "Syncing code and executing on remote server...")
             syncMgr.syncSingleServer(
                 profile = p,
                 onLog = {},
@@ -153,7 +153,7 @@ class RemoteFlowRunAction : AnAction("Run on Remote Server", "Masofaviy serverda
                         workingDir = p.remoteProjectPath,
                         onOutput = {},
                         onComplete = { code ->
-                            connMgr.notifyUser("Remote Flow", "Dastur bajarildi (Exit code: $code)")
+                            connMgr.notifyUser("Remote Flow", "Application execution finished (Exit code: $code)")
                         }
                     )
                 }
@@ -162,7 +162,7 @@ class RemoteFlowRunAction : AnAction("Run on Remote Server", "Masofaviy serverda
     }
 }
 
-class RemoteFlowDebugAction : AnAction("Debug on Remote Server", "Masofaviy serverda Debug rejimida (port 5005) ishga tushirish", RemoteFlowIcons.REMOTE_FLOW) {
+class RemoteFlowDebugAction : AnAction("Debug on Remote Server", "Run on remote server in JVM debug mode (port 5005)", RemoteFlowIcons.REMOTE_FLOW) {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val tw = ToolWindowManager.getInstance(project).getToolWindow("RemoteFlow")
@@ -173,11 +173,11 @@ class RemoteFlowDebugAction : AnAction("Debug on Remote Server", "Masofaviy serv
             val p = settings.activeProfile
 
             if (!connMgr.isConnected) {
-                connMgr.notifyUser("Remote Flow", "Serverga ulanilmagan! Avval ulaning.", NotificationType.WARNING)
+                connMgr.notifyUser("Remote Flow", "Not connected to server! Please connect first.", NotificationType.WARNING)
                 return@show
             }
 
-            connMgr.notifyUser("Remote Flow", "Debug rejimida ishga tushirilmoqda (Port: 5005)...")
+            connMgr.notifyUser("Remote Flow", "Starting application in debug mode (Port: 5005)...")
             syncMgr.syncSingleServer(
                 profile = p,
                 onLog = {},
@@ -189,17 +189,17 @@ class RemoteFlowDebugAction : AnAction("Debug on Remote Server", "Masofaviy serv
                         workingDir = p.remoteProjectPath,
                         onOutput = {},
                         onComplete = { code ->
-                            connMgr.notifyUser("Remote Flow", "Debug sessiyasi tugadi (Exit code: $code)")
+                            connMgr.notifyUser("Remote Flow", "Debug session ended (Exit code: $code)")
                         }
                     )
-                    connMgr.notifyUser("Remote Flow: Debug Tayyor", "Server 5005 portda kutmoqda. IntelliJ Remote JVM Debug ni ishga tushiring!")
+                    connMgr.notifyUser("Remote Flow: Debug Ready", "Server is listening on port 5005. Launch IntelliJ Remote JVM Debug!")
                 }
             )
         }
     }
 }
 
-class RemoteFlowTerminalAction : AnAction("Open Remote Terminal", "Masofaviy server SSH terminalini ochish", RemoteFlowIcons.REMOTE_FLOW) {
+class RemoteFlowTerminalAction : AnAction("Open Remote Terminal", "Open interactive SSH terminal session", RemoteFlowIcons.REMOTE_FLOW) {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val settings = RemoteFlowSettings.getInstance(project)
@@ -208,7 +208,7 @@ class RemoteFlowTerminalAction : AnAction("Open Remote Terminal", "Masofaviy ser
     }
 }
 
-class RemoteFlowBrowseFilesAction : AnAction("Browse Remote Files...", "Masofaviy server papka va fayllarini ko'rish", RemoteFlowIcons.REMOTE_FLOW) {
+class RemoteFlowBrowseFilesAction : AnAction("Browse Remote Files...", "Explore remote server files and directories", RemoteFlowIcons.REMOTE_FLOW) {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val settings = RemoteFlowSettings.getInstance(project)
@@ -231,7 +231,7 @@ class RemoteFlowBrowseFilesAction : AnAction("Browse Remote Files...", "Masofavi
     }
 }
 
-class RemoteFlowOpenLogAction : AnAction("Show Remote Flow Logs", "Pastki paneldagi barcha loglar oynasini ochish", RemoteFlowIcons.REMOTE_FLOW) {
+class RemoteFlowOpenLogAction : AnAction("Show Remote Flow Logs", "Open unified execution logs tool window", RemoteFlowIcons.REMOTE_FLOW) {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val tw = ToolWindowManager.getInstance(project).getToolWindow("Remote Flow Log")
@@ -239,14 +239,14 @@ class RemoteFlowOpenLogAction : AnAction("Show Remote Flow Logs", "Pastki paneld
     }
 }
 
-class RemoteFlowOpenSettingsAction : AnAction("Configure Remote Flow...", "Serverlar va sozlamalarni boshqarish", RemoteFlowIcons.REMOTE_FLOW) {
+class RemoteFlowOpenSettingsAction : AnAction("Configure Remote Flow...", "Manage servers and settings", RemoteFlowIcons.REMOTE_FLOW) {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         ShowSettingsUtil.getInstance().showSettingsDialog(project, RemoteFlowConfigurable::class.java)
     }
 }
 
-class RemoteFlowConfigAction : AnAction("Remote Configs (.env / .yml)...", "Masofaviy .env va application.yml sozlamalarini boshqarish", RemoteFlowIcons.REMOTE_FLOW) {
+class RemoteFlowConfigAction : AnAction("Remote Configs (.env / .yml)...", "Manage remote .env and application.yml configurations", RemoteFlowIcons.REMOTE_FLOW) {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val settings = RemoteFlowSettings.getInstance(project)

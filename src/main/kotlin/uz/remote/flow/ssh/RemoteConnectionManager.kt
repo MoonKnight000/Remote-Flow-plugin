@@ -108,11 +108,11 @@ class RemoteConnectionManager(private val project: Project) {
                 tempClient.disconnect()
                 tempClient.close()
 
-                if (ok) onResult(true, dirExists, "Ulanish muvaffaqiyatli! Server tayyor: " + profile.name)
-                else onResult(false, false, "Autentifikatsiya rad etildi. Login/parolni tekshiring.")
+                if (ok) onResult(true, dirExists, "Connection successful! Server ready: " + profile.name)
+                else onResult(false, false, "Authentication failed. Please check username/password or key.")
             } catch (e: Exception) {
                 try { tempClient?.disconnect(); tempClient?.close() } catch (_: Exception) {}
-                onResult(false, false, "Ulanib bo'lmadi: " + (e.message ?: e.toString()))
+                onResult(false, false, "Failed to connect: " + (e.message ?: e.toString()))
             }
         }
     }
@@ -190,7 +190,7 @@ class RemoteConnectionManager(private val project: Project) {
                 cmd.join(10, TimeUnit.SECONDS)
                 val status = cmd.exitStatus ?: -1
                 session.close()
-                onResult(status == 0, if (status == 0) null else "Server xatosi: status $status")
+                onResult(status == 0, if (status == 0) null else "Server error: exit status $status")
             } catch (e: Exception) {
                 onResult(false, e.message ?: e.toString())
             } finally {
@@ -268,7 +268,7 @@ class RemoteConnectionManager(private val project: Project) {
                 startPortForwarding(profile)
                 startKeepAliveWatchdog()
 
-                notifyUser("Remote Flow: Ulangan", "Serverga ulanish muvaffaqiyatli o'rnatildi: " + profile.name, NotificationType.INFORMATION)
+                notifyUser("Remote Flow: Connected", "Connected successfully to " + profile.name, NotificationType.INFORMATION)
                 project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).connectionStateChanged(true, profile)
                 onSuccess()
             } catch (e: Exception) {
@@ -299,13 +299,13 @@ class RemoteConnectionManager(private val project: Project) {
 
     private fun triggerAutoReconnect() {
         if (isReconnecting.compareAndSet(false, true)) {
-            notifyUser("Remote Flow: Qayta ulanmoqda", "Aloqa uzildi. Avtomatik qayta ulanish boshlandi...", NotificationType.WARNING)
+            notifyUser("Remote Flow: Reconnecting", "Connection lost. Automatically reconnecting...", NotificationType.WARNING)
             val profile = config.activeProfile
             connect(
                 profile = profile,
                 onSuccess = {
                     isReconnecting.set(false)
-                    notifyUser("Remote Flow: Tiklandi", "Server bilan aloqa avtomatik tiklandi!", NotificationType.INFORMATION)
+                    notifyUser("Remote Flow: Restored", "Connection to server automatically restored!", NotificationType.INFORMATION)
                 },
                 onError = {
                     isReconnecting.set(false)
@@ -427,9 +427,8 @@ class RemoteConnectionManager(private val project: Project) {
                         val raw = line ?: ""
                         val parts = raw.split('\r')
                         for (part in parts) {
-                            val clean = cleanAnsiText(part)
-                            if (clean.isNotBlank()) {
-                                onOutput(clean + "\n")
+                            if (part.isNotBlank()) {
+                                onOutput(part + "\n")
                             }
                         }
                     }

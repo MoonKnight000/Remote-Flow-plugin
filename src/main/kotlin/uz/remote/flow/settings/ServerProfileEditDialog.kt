@@ -53,7 +53,7 @@ class ServerProfileEditDialog(
     private val runCommandField = JBTextField(profile.runCommand)
     private val debugCommandField = JBTextField(profile.debugCommand)
 
-    private val chkAutoSyncOnSave = com.intellij.ui.components.JBCheckBox("⚡ Fayl saqlanganda avtomatik serverga yuklash (Auto-Sync on Save)", profile.autoSyncOnSave)
+    private val chkAutoSyncOnSave = com.intellij.ui.components.JBCheckBox("⚡ Auto-Sync on Save (automatically upload files on save)", profile.autoSyncOnSave)
     private val btnTestConn = JButton("⚡ Test Connection")
 
     init {
@@ -71,20 +71,20 @@ class ServerProfileEditDialog(
     private fun promptCreateRemoteDir(profile: ServerProfile, remotePath: String, onFinished: ((Boolean) -> Unit)? = null) {
         val choice = Messages.showYesNoDialog(
             project,
-            "Serverda masofaviy papka topilmadi:\n$remotePath\n\nUshbu papkani serverda hozir yaratishni xohlaysizmi?",
-            "Masofaviy Papka Topilmadi",
-            "Ha, Yaratish",
-            "Yo'q",
+            "Remote directory was not found on server:\n$remotePath\n\nWould you like to create this directory on the remote server now?",
+            "Remote Directory Not Found",
+            "Yes, Create",
+            "No",
             Messages.getQuestionIcon()
         )
         if (choice == Messages.YES) {
             connectionManager.createDirectory(profile, remotePath) { success, err ->
                 ApplicationManager.getApplication().invokeLater {
                     if (success) {
-                        Messages.showInfoMessage(project, "Masofaviy papka serverda muvaffaqiyatli yaratildi:\n$remotePath", "Papka Yaratildi")
+                        Messages.showInfoMessage(project, "Remote directory created successfully on server:\n$remotePath", "Directory Created")
                         onFinished?.invoke(true)
                     } else {
-                        Messages.showErrorDialog(project, "Papkani yaratishda xatolik yuz berdi: " + (err ?: "Ruxsat yo'q"), "Xatolik")
+                        Messages.showErrorDialog(project, "Failed to create directory: " + (err ?: "Permission denied"), "Error")
                         onFinished?.invoke(false)
                     }
                 }
@@ -171,22 +171,22 @@ class ServerProfileEditDialog(
             FileChooserDescriptorFactory.createSingleFileDescriptor()
         )
 
-        btnResetExcludes.toolTipText = "Default istisnolar ro'yxatini tiklash"
+        btnResetExcludes.toolTipText = "Reset to default exclude patterns"
         btnResetExcludes.addActionListener {
             excludePatternsField.text = uz.remote.flow.ssh.defaultExcludes()
         }
 
-        (rsyncPathField.textField as JBTextField).emptyText.text = "IntelliJ IDEA Rsync sozlamasidan (avtomatik)"
-        btnAutoDetectRsync.toolTipText = "IntelliJ IDEA yoki tizimdan rsync.exe ni aniqlash"
+        (rsyncPathField.textField as JBTextField).emptyText.text = "From IntelliJ IDEA Rsync settings (automatic)"
+        btnAutoDetectRsync.toolTipText = "Auto-detect rsync.exe from IntelliJ IDEA or system PATH"
         btnAutoDetectRsync.addActionListener {
             val detected = uz.remote.flow.ssh.detectRsyncPath()
             if (detected.isNotBlank()) {
                 rsyncPathField.text = detected
                 val idePath = uz.remote.flow.sync.IntelliJRsyncConfigProvider.getRsyncConfig().rsyncPath
-                val origin = if (detected.equals(idePath, ignoreCase = true)) " (IntelliJ IDEA Tools -> Rsync sozlamasidan)" else ""
-                Messages.showInfoMessage(project, "Rsync topildi$origin:\n$detected", "Rsync Aniqlash")
+                val origin = if (detected.equals(idePath, ignoreCase = true)) " (from IntelliJ IDEA Tools -> Rsync settings)" else ""
+                Messages.showInfoMessage(project, "Rsync detected$origin:\n$detected", "Rsync Detection")
             } else {
-                Messages.showWarningDialog(project, "Tizimdan rsync topilmadi. Qo'lda tanlashingiz mumkin yoki SFTP zaxira ishlatiladi.", "Rsync Topilmadi")
+                Messages.showWarningDialog(project, "Rsync executable not found in system PATH. You can browse manually or SFTP fallback will be used.", "Rsync Not Found")
             }
         }
 
@@ -230,16 +230,16 @@ class ServerProfileEditDialog(
             connectionManager.testConnection(temp, checkRemoteDir = targetRemote) { ok, dirExists, msg ->
                 ApplicationManager.getApplication().invokeLater {
                     if (!ok) {
-                        Messages.showErrorDialog(project, msg, "Ulanib bo'lmadi")
+                        Messages.showErrorDialog(project, msg, "Connection Error")
                         return@invokeLater
                     }
 
                     if (targetRemote.isNotBlank() && !dirExists) {
                         promptCreateRemoteDir(temp, targetRemote)
                     } else if (targetRemote.isNotBlank()) {
-                        Messages.showInfoMessage(project, "$msg\n\nMasofaviy papka mavjud: $targetRemote", "Ulanish muvaffaqiyatli!")
+                        Messages.showInfoMessage(project, "$msg\n\nRemote directory exists: $targetRemote", "Connection Successful")
                     } else {
-                        Messages.showInfoMessage(project, msg, "Ulanish muvaffaqiyatli!")
+                        Messages.showInfoMessage(project, msg, "Connection Successful")
                     }
                 }
             }
@@ -308,7 +308,7 @@ class ServerProfileEditDialog(
         val rsyncBtns = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0))
         rsyncBtns.add(btnAutoDetectRsync)
         val btnOpenIdeRsync = JButton("⚙ IntelliJ Rsync")
-        btnOpenIdeRsync.toolTipText = "IntelliJ IDEA rasmiy Rsync sozlamalari (Tools -> Rsync)"
+        btnOpenIdeRsync.toolTipText = "IntelliJ IDEA official Rsync settings (Tools -> Rsync)"
         btnOpenIdeRsync.addActionListener {
             try {
                 com.intellij.openapi.options.ShowSettingsUtil.getInstance().showSettingsDialog(project, "rsyncConfigurable")
@@ -326,10 +326,10 @@ class ServerProfileEditDialog(
         // Row 9: Remote Java (JAVA_HOME)
         gbc.gridx = 0; gbc.gridy = 9; gbc.weightx = 0.0; form.add(JBLabel("Remote Java:"), gbc)
         val javaPanel = JPanel(BorderLayout(4, 0))
-        javaHomeField.emptyText.text = "Masofaviy Java / JAVA_HOME (masalan: /usr/lib/jvm/java-17-openjdk-amd64)"
+        javaHomeField.emptyText.text = "Remote Java / JAVA_HOME (e.g., /usr/lib/jvm/java-17-openjdk-amd64)"
         javaPanel.add(javaHomeField, BorderLayout.CENTER)
         val jBtns = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0))
-        btnAutoDetectJava.toolTipText = "Serverdan mavjud Java o'rnatmalarini aniqlash"
+        btnAutoDetectJava.toolTipText = "Detect available Java installations on the server"
         btnAutoDetectJava.addActionListener {
             val temp = profile.copyProfile()
             applyToProfile(temp)
@@ -340,14 +340,14 @@ class ServerProfileEditDialog(
                     btnAutoDetectJava.isEnabled = true
                     btnAutoDetectJava.text = "🔍 Auto"
                     if (list.isEmpty()) {
-                        Messages.showInfoMessage(project, "Masofaviy serverda Java avtomatik aniqlanmadi. Qo'lda kiriting.", "Remote Java")
+                        Messages.showInfoMessage(project, "Java was not automatically detected on the remote server. Please specify manually.", "Remote Java")
                     } else if (list.size == 1) {
                         javaHomeField.text = list[0]
-                        Messages.showInfoMessage(project, "Remote Java topildi:\n${list[0]}", "Java Topildi")
+                        Messages.showInfoMessage(project, "Remote Java found:\n${list[0]}", "Java Found")
                     } else {
                         val chosen = Messages.showEditableChooseDialog(
-                            "Serverda quyidagi Java versiyalari topildi. Keraklisini tanlang:",
-                            "Remote Java Tanlash",
+                            "The following Java installations were found on the server. Select one:",
+                            "Select Remote Java",
                             Messages.getQuestionIcon(),
                             list.toTypedArray(),
                             list[0],

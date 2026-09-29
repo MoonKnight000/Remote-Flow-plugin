@@ -64,7 +64,7 @@ class RemoteConfigManagerDialog(
         override fun isCellEditable(row: Int, column: Int): Boolean = column == 0 || column == 1
     }
     private val configTable = JBTable(tableModel)
-    private val chkShowSecrets = JBCheckBox("👁 Show Secrets (Parol va tokenlarni ko'rsatish)", false)
+    private val chkShowSecrets = JBCheckBox("👁 Show Secrets", false)
     private val btnAddKey = JButton("➕ Add Key")
     private val btnRemoveKey = JButton("➖ Remove Key")
 
@@ -73,7 +73,7 @@ class RemoteConfigManagerDialog(
     private val rawStatusLabel = JBLabel("Lines: 0 | Characters: 0")
 
     // Options
-    private val chkCreateBackup = JBCheckBox("Serverda avtomatik zaxira nusxa (.bak) yaratish", true)
+    private val chkCreateBackup = JBCheckBox("Create automatic backup (.bak) on remote server", true)
     private val btnSave = JButton("💾 Save to Remote Server")
 
     private var currentRemoteFullPath = ""
@@ -102,7 +102,7 @@ class RemoteConfigManagerDialog(
 
     private fun createTopFileSelectorBar(): JPanel {
         val panel = JPanel(BorderLayout(8, 0))
-        panel.border = IdeBorderFactory.createTitledBorder("Masofaviy Konfiguratsiya Fayli", false)
+        panel.border = IdeBorderFactory.createTitledBorder("Remote Configuration File", false)
 
         val left = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
         left.add(JBLabel("Config File:"))
@@ -116,11 +116,11 @@ class RemoteConfigManagerDialog(
         }
         left.add(fileComboBox)
 
-        btnScanServer.toolTipText = "Loyiha papkasidagi barcha .env va *.yml fayllarni serverdan qidirish"
+        btnScanServer.toolTipText = "Scan project directory for .env and *.yml configuration files on server"
         btnScanServer.addActionListener { scanServerForConfigs() }
         left.add(btnScanServer)
 
-        btnReload.toolTipText = "Faylni serverdan qayta o'qish"
+        btnReload.toolTipText = "Reload file from remote server"
         btnReload.addActionListener { loadSelectedConfigFile() }
         left.add(btnReload)
 
@@ -150,7 +150,7 @@ class RemoteConfigManagerDialog(
 
         val kvRight = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 2))
         btnAddKey.addActionListener {
-            val k = Messages.showInputDialog(panel, "Yangi kalit (Key) nomini kiriting:", "Yangi Kalit Qo'shish", null)
+            val k = Messages.showInputDialog(panel, "Enter key name:", "Add New Key", null)
             if (!k.isNullOrBlank()) {
                 val isSec = isSensitiveKey(k)
                 tableModel.addRow(arrayOf(k.trim(), "", if (isSec) "🔒 Secret" else "Text"))
@@ -244,13 +244,13 @@ class RemoteConfigManagerDialog(
         panel.border = JBUI.Borders.empty(4, 0)
 
         val left = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
-        chkCreateBackup.toolTipText = "Fayl saqlanishidan avval serverda .bak nusxasi olinadi"
+        chkCreateBackup.toolTipText = "Creates a .bak copy on server before saving changes"
         left.add(chkCreateBackup)
 
         val right = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0))
         btnSave.font = btnSave.font.deriveFont(Font.BOLD)
         btnSave.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
-        btnSave.toolTipText = "O'zgarishlarni serverga yuklash"
+        btnSave.toolTipText = "Save changes to remote server"
         btnSave.addActionListener { saveContentToRemote() }
         right.add(btnSave)
 
@@ -290,13 +290,13 @@ class RemoteConfigManagerDialog(
     private fun loadSelectedConfigFile() {
         val fullPath = resolveSelectedPath()
         currentRemoteFullPath = fullPath
-        fileStatusLabel.text = "Yuklanmoqda..."
+        fileStatusLabel.text = "Loading..."
         fileStatusLabel.foreground = JBColor.GRAY
 
         fileManager.readFileContent(profile, fullPath) { content, err ->
             ApplicationManager.getApplication().invokeLater {
                 if (err != null || content == null) {
-                    fileStatusLabel.text = "⚪ Serverda mavjud emas (Yangi fayl yaratiladi)"
+                    fileStatusLabel.text = "⚪ Not present on server (new file will be created)"
                     fileStatusLabel.foreground = JBColor.ORANGE
                     isUpdatingContent = true
                     rawTextArea.text = ""
@@ -305,7 +305,7 @@ class RemoteConfigManagerDialog(
                     updateRawStatus()
                 } else {
                     val sizeKb = String.format(java.util.Locale.US, "%.1f KB", content.toByteArray().size / 1024.0)
-                    fileStatusLabel.text = "🟢 Serverda mavjud ($sizeKb)"
+                    fileStatusLabel.text = "🟢 Present on server ($sizeKb)"
                     fileStatusLabel.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
 
                     isUpdatingContent = true
@@ -319,7 +319,7 @@ class RemoteConfigManagerDialog(
     }
 
     private fun scanServerForConfigs() {
-        fileStatusLabel.text = "Server tekshirilmoqda..."
+        fileStatusLabel.text = "Scanning server..."
         val base = profile.remoteProjectPath.trimEnd('/')
         val cmd = "find \"$base\" -maxdepth 2 \\( -name \".env*\" -o -name \"*.yml\" -o -name \"*.yaml\" -o -name \"*.properties\" \\) 2>/dev/null"
 
@@ -343,9 +343,9 @@ class RemoteConfigManagerDialog(
                         isUpdatingContent = false
                         fileComboBox.selectedIndex = 0
                         loadSelectedConfigFile()
-                        Messages.showInfoMessage(project, "${foundLines.size} ta konfiguratsiya fayli serverda topildi!", "Scan Natijasi")
+                        Messages.showInfoMessage(project, "${foundLines.size} configuration file(s) found on server!", "Scan Results")
                     } else {
-                        Messages.showInfoMessage(project, "Loyiha papkasida qo'shimcha maxsus config fayllar topilmadi.", "Scan Natijasi")
+                        Messages.showInfoMessage(project, "No additional configuration files found in project directory.", "Scan Results")
                     }
                 }
             }
@@ -440,29 +440,29 @@ class RemoteConfigManagerDialog(
         val newContent = rawTextArea.text
 
         btnSave.isEnabled = false
-        fileStatusLabel.text = "Saqlanmoqda..."
+        fileStatusLabel.text = "Saving..."
 
         fun doActualSave() {
             fileManager.saveFileContent(profile, targetPath, newContent) { ok, err ->
                 ApplicationManager.getApplication().invokeLater {
                     btnSave.isEnabled = true
                     if (ok) {
-                        fileStatusLabel.text = "🟢 Saqlandi (${SimpleDateFormat("HH:mm:ss").format(Date())})"
+                        fileStatusLabel.text = "🟢 Saved (${SimpleDateFormat("HH:mm:ss").format(Date())})"
                         fileStatusLabel.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
                         logService.log(
-                            "[CONFIG SAVED] '$targetPath' serverda muvaffaqiyatli saqlandi!",
+                            "[CONFIG SAVED] '$targetPath' saved successfully on server!",
                             LogCategory.FILES,
                             profile.name
                         )
                         connectionManager.notifyUser(
-                            "Remote Config Saqlandi ⚙",
-                            "'$targetPath' serverda yangilandi!",
+                            "Remote Config Saved ⚙",
+                            "'$targetPath' has been updated on server!",
                             NotificationType.INFORMATION
                         )
                     } else {
-                        fileStatusLabel.text = "❌ Saqlashda xatolik: $err"
+                        fileStatusLabel.text = "❌ Error saving file: $err"
                         fileStatusLabel.foreground = JBColor.RED
-                        Messages.showErrorDialog(project, "Serverga saqlab bo'lmadi:\n$err", "Config Saqlash Xatosi")
+                        Messages.showErrorDialog(project, "Failed to save file to server:\n$err", "Config Save Error")
                     }
                 }
             }

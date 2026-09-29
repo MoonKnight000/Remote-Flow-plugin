@@ -49,7 +49,7 @@ class RemoteFileViewerDialog(
         topBar.add(pathLabel, BorderLayout.CENTER)
 
         val reloadBtn = JButton("⟳ Reload")
-        reloadBtn.toolTipText = "Serverdan yangi versiyasini qayta yuklash"
+        reloadBtn.toolTipText = "Reload latest version from server"
         reloadBtn.addActionListener { reloadContent() }
         topBar.add(reloadBtn, BorderLayout.EAST)
         root.add(topBar, BorderLayout.NORTH)
@@ -72,7 +72,7 @@ class RemoteFileViewerDialog(
         btnCopy.addActionListener {
             val sel = StringSelection(textArea.text)
             Toolkit.getDefaultToolkit().systemClipboard.setContents(sel, sel)
-            statusLabel.text = "Matn buferga nusxalandi!"
+            statusLabel.text = "Text copied to clipboard!"
         }
         actionButtons.add(btnCopy)
 
@@ -93,15 +93,15 @@ class RemoteFileViewerDialog(
     }
 
     private fun reloadContent() {
-        statusLabel.text = "Serverdan qayta yuklanmoqda..."
+        statusLabel.text = "Reloading from server..."
         fileManager.readFileContent(profile, remotePath) { content, err ->
             ApplicationManager.getApplication().invokeLater {
                 if (content != null) {
                     originalContent = content
                     textArea.text = content
-                    statusLabel.text = "Muvaffaqiyatli yangilandi: $remotePath"
+                    statusLabel.text = "Successfully reloaded: $remotePath"
                 } else {
-                    statusLabel.text = "Xatolik: $err"
+                    statusLabel.text = "Error: $err"
                 }
             }
         }
@@ -109,23 +109,23 @@ class RemoteFileViewerDialog(
 
     private fun saveContentToRemote() {
         val newText = textArea.text
-        statusLabel.text = "Serverga saqlanmoqda..."
+        statusLabel.text = "Saving to server..."
         fileManager.saveFileContent(profile, remotePath, newText) { success, err ->
             ApplicationManager.getApplication().invokeLater {
                 if (success) {
                     originalContent = newText
-                    statusLabel.text = "Serverga muvaffaqiyatli saqlandi! ($remotePath)"
-                    Messages.showInfoMessage(project, "Fayl serverga saqlandi: $remotePath", "Saqlandi")
+                    statusLabel.text = "Successfully saved to server! ($remotePath)"
+                    Messages.showInfoMessage(project, "File saved to server: $remotePath", "Saved")
                 } else {
-                    statusLabel.text = "Saqlashda xatolik: $err"
-                    Messages.showErrorDialog(project, "Serverga saqlab bo'lmadi: $err", "Xatolik")
+                    statusLabel.text = "Error saving: $err"
+                    Messages.showErrorDialog(project, "Failed to save to server: $err", "Error")
                 }
             }
         }
     }
 
     private fun downloadToLocal() {
-        val descriptor = FileSaverDescriptor("Download Remote File", "Faylni saqlash joyini tanlang", fileName.substringAfterLast('.'))
+        val descriptor = FileSaverDescriptor("Download Remote File", "Choose destination to save file", fileName.substringAfterLast('.'))
         val dialog = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project)
         val baseVirtualDir = project.basePath?.let { com.intellij.openapi.vfs.LocalFileSystem.getInstance().findFileByPath(it) }
         val target = dialog.save(baseVirtualDir, fileName)
@@ -134,9 +134,9 @@ class RemoteFileViewerDialog(
             fileManager.downloadFile(profile, remotePath, file) { success, err ->
                 ApplicationManager.getApplication().invokeLater {
                     if (success) {
-                        Messages.showInfoMessage(project, "Fayl muvaffaqiyatli yuklab olindi:\n${file.absolutePath}", "Yuklab Olindi")
+                        Messages.showInfoMessage(project, "File downloaded successfully:\n${file.absolutePath}", "Download Complete")
                     } else {
-                        Messages.showErrorDialog(project, "Yuklab olishda xatolik: $err", "Xatolik")
+                        Messages.showErrorDialog(project, "Error downloading file: $err", "Error")
                     }
                 }
             }

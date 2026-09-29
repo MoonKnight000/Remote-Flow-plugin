@@ -48,14 +48,14 @@ class RemoteFlowAutoSyncService(private val project: Project) : FileDocumentMana
                             type = NotificationType.INFORMATION
                         )
                         uz.remote.flow.logging.RemoteFlowLogService.getInstance(project).log(
-                            message = "[REMOTE SAVE] '${file.name}' serverda saqlandi: $remotePath\n",
+                            message = "[REMOTE SAVE] '${file.name}' saved to remote server: $remotePath\n",
                             category = uz.remote.flow.logging.LogCategory.FILES,
                             serverName = profile.name
                         )
                     } else {
                         connManager.notifyUser(
-                            title = "Remote Flow: Xatolik",
-                            message = "'${file.name}' serverda saqlanmadi: $err",
+                            title = "Remote Flow: Error",
+                            message = "Failed to save '${file.name}' to server: $err",
                             type = NotificationType.ERROR
                         )
                     }
@@ -99,7 +99,7 @@ class RemoteFlowAutoSyncService(private val project: Project) : FileDocumentMana
                     if (success) {
                         connManager.notifyUser(
                             title = "Auto-Sync ⚡",
-                            message = "'$relPath' serverga avtomatik yuklandi!",
+                            message = "'$relPath' automatically uploaded to server!",
                             type = NotificationType.INFORMATION
                         )
                     }

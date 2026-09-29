@@ -84,7 +84,7 @@ class RemoteFileManager(private val project: Project) {
                     val parsed = parseLsOutput(cleanPath, lines)
                     onResult(parsed, null)
                 } else {
-                    onResult(emptyList(), "Masofaviy papkani o'qib bo'lmadi: $originalError")
+                    onResult(emptyList(), "Failed to read remote directory: $originalError")
                 }
             }
         )
@@ -155,7 +155,7 @@ class RemoteFileManager(private val project: Project) {
                     onOutput = { sb.append(it) },
                     onComplete = { code ->
                         if (code == 0) onResult(sb.toString(), null)
-                        else onResult(null, e.message ?: "Faylni o'qib bo'lmadi")
+                        else onResult(null, e.message ?: "Failed to read file")
                     }
                 )
             }
@@ -286,7 +286,7 @@ class RemoteFileManager(private val project: Project) {
                             onComplete(success, err)
                         }
                     } else {
-                        onComplete(false, "Serverda papkani arxivlashda xatolik yuz berdi (Exit code: $code)")
+                        onComplete(false, "Failed to archive directory on server (Exit code: $code)")
                     }
                 }
             )
@@ -342,7 +342,7 @@ class RemoteFileManager(private val project: Project) {
             workingDir = "",
             onOutput = {},
             onComplete = { code ->
-                onComplete(code == 0, if (code == 0) null else "Xatolik (Exit status: $code)")
+                onComplete(code == 0, if (code == 0) null else "Error deleting path (Exit status: $code)")
             }
         )
     }

@@ -75,7 +75,7 @@ class RemoteFlowLogPanel(private val project: Project) : JPanel(BorderLayout(0, 
         val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2))
 
         // 1. Clear Logs button
-        btnClearLogs.toolTipText = "Barcha loglarni tozalash"
+        btnClearLogs.toolTipText = "Clear all logs"
         toolbar.add(btnClearLogs)
 
         // 2. Filter Search Field
@@ -95,7 +95,7 @@ class RemoteFlowLogPanel(private val project: Project) : JPanel(BorderLayout(0, 
         toolbar.add(categoryComboBox)
 
         // 5. Edit Config button
-        btnEditConfig.toolTipText = "Remote Flow sozlamalarini ochish"
+        btnEditConfig.toolTipText = "Open Remote Flow settings"
         btnEditConfig.addActionListener {
             ShowSettingsUtil.getInstance().showSettingsDialog(project, RemoteFlowConfigurable::class.java)
         }
