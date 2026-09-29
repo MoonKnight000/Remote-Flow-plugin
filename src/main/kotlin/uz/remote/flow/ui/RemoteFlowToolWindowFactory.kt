@@ -880,29 +880,50 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         p.runCommand = runCommandField.text.trim()
         val rawCmd = p.runCommand
         val cmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(rawCmd, p.javaHome)
-        log("[REMOTE RUN] 1. Syncing latest code to server...\n")
 
-        syncManager.syncSingleServer(
-            profile = p,
-            onLog = { log(it) },
-            onComplete = { success ->
-                if (!success) {
-                    log("[REMOTE RUN WARNING] Sync warning occurred, proceeding with command...\n", true)
-                }
-                val javaInfo = if (p.javaHome.isNotBlank()) " (Java: ${p.javaHome})" else ""
-                log("[REMOTE RUN] 2. Executing remote command on server$javaInfo: $rawCmd\n")
-                connectionManager.executeRemoteCommand(
-                    cmd = cmd,
-                    workingDir = p.remoteProjectPath,
-                    onOutput = { log(it) },
-                    onComplete = { code ->
-                        log("[REMOTE RUN FINISHED] Exit code: $code\n")
-                        connectionManager.notifyUser("Remote Flow: Execution Finished", "Application completed on server (Exit code: $code)", NotificationType.INFORMATION)
-                        pingApiHealth()
+        val doRun = {
+            connectionManager.startPortForwarding(p)
+            log("[REMOTE RUN] 1. Syncing latest code to server...\n")
+            syncManager.syncSingleServer(
+                profile = p,
+                onLog = { log(it) },
+                onComplete = { success ->
+                    if (!success) {
+                        log("[REMOTE RUN WARNING] Sync warning occurred, proceeding with command...\n", true)
                     }
-                )
+                    val javaInfo = if (p.javaHome.isNotBlank()) " (Java: ${p.javaHome})" else ""
+                    log("[REMOTE RUN] 2. Executing remote command on server$javaInfo: $rawCmd\n")
+                    val readyNotified = java.util.concurrent.atomic.AtomicBoolean(false)
+                    connectionManager.executeRemoteCommand(
+                        cmd = cmd,
+                        workingDir = p.remoteProjectPath,
+                        isLongRunning = true,
+                        onOutput = { line ->
+                            log(line)
+                            if (!readyNotified.get() && (line.contains("Tomcat started on port(s):") || line.contains("Netty started on port") || (line.contains("Started ") && line.contains(" in ") && line.contains("seconds")))) {
+                                readyNotified.set(true)
+                                val httpPort = p.forwardedPorts.firstOrNull { fp -> fp.direction == ForwardDirection.LOCAL_TO_REMOTE }?.localPort ?: 8080
+                                log("[APP READY] 🚀 Application is ready! Accessible locally at: http://localhost:$httpPort\n")
+                            }
+                        },
+                        onComplete = { code ->
+                            log("[REMOTE RUN FINISHED] Exit code: $code\n")
+                            connectionManager.notifyUser("Remote Flow: Execution Finished", "Application completed on server (Exit code: $code)", NotificationType.INFORMATION)
+                            pingApiHealth()
+                        }
+                    )
+                }
+            )
+        }
+
+        if (connectionManager.isProcessRunning) {
+            log("[REMOTE RUN] Restarting: stopping existing process first...\n")
+            connectionManager.stopRemoteProcess(p, onOutput = { log(it) }) {
+                doRun()
             }
-        )
+        } else {
+            doRun()
+        }
     }
 
     private fun executeRemoteDebug() {
@@ -916,35 +937,64 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         p.debugCommand = debugCommandField.text.trim()
         val rawCmd = p.debugCommand
         val cmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(rawCmd, p.javaHome)
-        log("[REMOTE DEBUG] 1. Syncing code to remote server...\n")
 
-        syncManager.syncSingleServer(
-            profile = p,
-            onLog = { log(it) },
-            onComplete = { _ ->
-                val javaInfo = if (p.javaHome.isNotBlank()) " (Java: ${p.javaHome})" else ""
-                log("[REMOTE DEBUG] 2. Launching application in debug mode (port 5005) on server$javaInfo: $rawCmd\n")
-                connectionManager.executeRemoteCommand(
-                    cmd = cmd,
-                    workingDir = p.remoteProjectPath,
-                    onOutput = { log(it) },
-                    onComplete = { code -> log("[REMOTE DEBUG EXIT] Exit code: $code\n") }
-                )
-                log("[DEBUGGER READY] Server is listening on port 5005. Launch IntelliJ 'Remote JVM Debug' configuration!\n")
-                connectionManager.notifyUser("Remote Flow: Debug Ready", "Server is listening on port 5005. Connect via IntelliJ 'Remote JVM Debug'!", NotificationType.INFORMATION)
+        val doDebug = {
+            connectionManager.startSingleForward(PortMapping(5005, 5005, "JVM Debug", direction = ForwardDirection.LOCAL_TO_REMOTE))
+            connectionManager.startPortForwarding(p)
+            log("[REMOTE DEBUG] 1. Syncing code to remote server...\n")
+
+            syncManager.syncSingleServer(
+                profile = p,
+                onLog = { log(it) },
+                onComplete = { _ ->
+                    val javaInfo = if (p.javaHome.isNotBlank()) " (Java: ${p.javaHome})" else ""
+                    log("[REMOTE DEBUG] 2. Launching application in debug mode (port 5005) on server$javaInfo: $rawCmd\n")
+
+                    val debuggerAttached = java.util.concurrent.atomic.AtomicBoolean(false)
+                    connectionManager.executeRemoteCommand(
+                        cmd = cmd,
+                        workingDir = p.remoteProjectPath,
+                        isLongRunning = true,
+                        onOutput = { line ->
+                            log(line)
+                            if (!debuggerAttached.get() && (line.contains("Listening for transport dt_socket at address:") || line.contains("dt_socket") || line.contains("5005"))) {
+                                if (debuggerAttached.compareAndSet(false, true)) {
+                                    uz.remote.flow.debug.RemoteDebugHelper.attachRemoteDebugger(project, "localhost", 5005, p.name)
+                                }
+                            }
+                        },
+                        onComplete = { code -> log("[REMOTE DEBUG EXIT] Exit code: $code\n") }
+                    )
+
+                    com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService().schedule({
+                        if (connectionManager.isProcessRunning && debuggerAttached.compareAndSet(false, true)) {
+                            uz.remote.flow.debug.RemoteDebugHelper.attachRemoteDebugger(project, "localhost", 5005, p.name)
+                        }
+                    }, 3500, TimeUnit.MILLISECONDS)
+                }
+            )
+        }
+
+        if (connectionManager.isProcessRunning) {
+            log("[REMOTE DEBUG] Restarting: stopping existing debug session first...\n")
+            connectionManager.stopRemoteProcess(p, onOutput = { log(it) }) {
+                doDebug()
             }
-        )
+        } else {
+            doDebug()
+        }
     }
 
     private fun executeRemoteStop() {
         logService.showLogWindow()
-        log("[STOPPING] Sending stop command to remote application...\n")
-        val stopCmd = "pkill -f bootRun 2>/dev/null; pkill -f 'java.*jar' 2>/dev/null; echo 'App stopped.'"
-        connectionManager.executeRemoteCommand(
-            cmd = stopCmd,
-            workingDir = settings.activeProfile.remoteProjectPath,
+        log("[STOPPING] Stopping remote application...\n")
+        connectionManager.stopRemoteProcess(
+            profile = settings.activeProfile,
             onOutput = { log(it) },
-            onComplete = { log("[STOPPED] Application stopped.\n") }
+            onComplete = {
+                log("[STOPPED] Application stopped.\n")
+                connectionManager.notifyUser("Remote Flow", "Application stopped on server", NotificationType.INFORMATION)
+            }
         )
     }
 

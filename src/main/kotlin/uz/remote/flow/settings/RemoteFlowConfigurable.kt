@@ -61,6 +61,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
     private val javaHomeField = JBTextField()
     private val btnAutoDetectJava = JButton("Detect Remote Java", AllIcons.Actions.Search)
     private val chkAutoSyncOnSave = JBCheckBox("⚡ Auto-Sync on Save (automatically upload files to server on Ctrl+S)", false)
+    private val chkRouteStandardRun = JBCheckBox("🔄 Route standard IDE Run/Debug (HomeSaleV2Application) to active remote server", true)
 
     private val autoReconnectCheck = JBCheckBox("Auto-Reconnect & Keep-Alive", true)
     private val btnTestConnection = JButton("Test Connection", AllIcons.Actions.Execute)
@@ -478,11 +479,16 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         gbc.gridx = 0; gbc.gridy = 12; gbc.gridwidth = 4; gbc.weightx = 1.0
         form.add(chkAutoSyncOnSave, gbc)
 
-        // Row 13: Buttons
+        // Row 13: Route Standard Run
+        chkRouteStandardRun.toolTipText = "When enabled, pressing Shift+F10 / Run on HomeSaleV2Application automatically executes on the active remote server"
+        gbc.gridx = 0; gbc.gridy = 13; gbc.gridwidth = 4; gbc.weightx = 1.0
+        form.add(chkRouteStandardRun, gbc)
+
+        // Row 14: Buttons
         val btnRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
         btnRow.add(btnTestConnection)
         btnRow.add(autoReconnectCheck)
-        gbc.gridx = 0; gbc.gridy = 13; gbc.gridwidth = 4; gbc.weightx = 1.0
+        gbc.gridx = 0; gbc.gridy = 14; gbc.gridwidth = 4; gbc.weightx = 1.0
         form.add(btnRow, gbc)
 
         // Ports Table
@@ -666,6 +672,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
             saveCurrentSelection()
         }
         if (settings.autoReconnect != autoReconnectCheck.isSelected) return true
+        if (settings.routeStandardRunToRemote != chkRouteStandardRun.isSelected) return true
         if (settings.profiles.size != workingProfiles.size) return true
         if (settings.profiles.isNotEmpty() && settings.activeProfileIndex != selectedIndex) return true
         for (i in workingProfiles.indices) {
@@ -698,6 +705,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
             selectedIndex.coerceIn(settings.profiles.indices)
         } else 0
         settings.autoReconnect = autoReconnectCheck.isSelected
+        settings.routeStandardRunToRemote = chkRouteStandardRun.isSelected
 
         val activeP = settings.activeProfileOrNull
         if (activeP != null && activeP.remoteProjectPath.isNotBlank() && connectionManager.isConnected) {
@@ -717,6 +725,8 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
 
     override fun reset() {
         resetWorkingCopy()
+        chkRouteStandardRun.isSelected = settings.routeStandardRunToRemote
+        autoReconnectCheck.isSelected = settings.autoReconnect
         if (workingProfiles.isNotEmpty()) {
             profileList.selectedIndex = selectedIndex
             loadProfileToForm(workingProfiles[selectedIndex])

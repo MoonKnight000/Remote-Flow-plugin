@@ -20,6 +20,7 @@ class RemoteFlowSettings(private val project: Project) : PersistentStateComponen
         var profiles: MutableList<ServerProfile> = mutableListOf()
         var activeProfileIndex: Int = 0
         var autoReconnect: Boolean = true
+        var routeStandardRunToRemote: Boolean = true
     }
 
     private var myState = State()
@@ -76,6 +77,12 @@ class RemoteFlowSettings(private val project: Project) : PersistentStateComponen
         get() = myState.autoReconnect
         set(value) {
             myState.autoReconnect = value
+        }
+
+    var routeStandardRunToRemote: Boolean
+        get() = myState.routeStandardRunToRemote
+        set(value) {
+            myState.routeStandardRunToRemote = value
         }
 
     companion object {

@@ -41,6 +41,13 @@ class RemoteConnectionManager(private val project: Project) {
     val isConnected: Boolean
         get() = sshClient?.isConnected == true && sshClient?.isAuthenticated == true
 
+    @Volatile var isProcessRunning: Boolean = false
+        private set
+    @Volatile var runningCommand: String? = null
+        private set
+    @Volatile private var activeSession: net.schmizz.sshj.connection.channel.direct.Session? = null
+    @Volatile private var activeCommand: net.schmizz.sshj.connection.channel.direct.Session.Command? = null
+
     fun getActiveSshClient(): SSHClient? = if (isConnected) sshClient else null
 
     fun <T> withSshClient(
@@ -406,6 +413,14 @@ class RemoteConnectionManager(private val project: Project) {
         workingDir: String = config.activeProfile.remoteProjectPath,
         onOutput: (String) -> Unit,
         onComplete: (Int) -> Unit
+    ) = executeRemoteCommand(cmd, workingDir, false, onOutput, onComplete)
+
+    fun executeRemoteCommand(
+        cmd: String,
+        workingDir: String,
+        isLongRunning: Boolean,
+        onOutput: (String) -> Unit,
+        onComplete: (Int) -> Unit
     ) {
         executor.submit {
             val client = sshClient
@@ -420,6 +435,17 @@ class RemoteConnectionManager(private val project: Project) {
                 val session = client.startSession()
                 session.allocateDefaultPTY()
                 val command = session.exec(fullCmd)
+
+                if (isLongRunning) {
+                    isProcessRunning = true
+                    runningCommand = cmd
+                    activeSession = session
+                    activeCommand = command
+                    com.intellij.ide.ActivityTracker.getInstance().inc()
+                    try {
+                        project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).processStateChanged(true, cmd)
+                    } catch (_: Exception) {}
+                }
 
                 BufferedReader(InputStreamReader(command.inputStream, java.nio.charset.StandardCharsets.UTF_8)).use { reader ->
                     var line: String?
@@ -437,12 +463,69 @@ class RemoteConnectionManager(private val project: Project) {
 
                 command.join()
                 val exitStatus = command.exitStatus ?: 0
-                session.close()
+                try { session.close() } catch (_: Exception) {}
                 onComplete(exitStatus)
             } catch (e: Exception) {
-                onOutput("[ERROR]: " + e.message + "\n")
+                onOutput("[ERROR]: " + (e.message ?: e.toString()) + "\n")
                 onComplete(-1)
+            } finally {
+                if (isLongRunning) {
+                    isProcessRunning = false
+                    runningCommand = null
+                    activeSession = null
+                    activeCommand = null
+                    com.intellij.ide.ActivityTracker.getInstance().inc()
+                    try {
+                        project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).processStateChanged(false, null)
+                    } catch (_: Exception) {}
+                }
             }
+        }
+    }
+
+    fun stopRemoteProcess(
+        profile: ServerProfile = config.activeProfile,
+        onOutput: (String) -> Unit = {},
+        onComplete: () -> Unit = {}
+    ) {
+        executor.submit {
+            try {
+                // 1. Send Ctrl+C (ETX = 3) to the active command's output stream
+                activeCommand?.outputStream?.let { os ->
+                    try {
+                        os.write(3)
+                        os.flush()
+                    } catch (_: Exception) {}
+                }
+            } catch (_: Exception) {}
+
+            try {
+                activeSession?.close()
+            } catch (_: Exception) {}
+            activeSession = null
+            activeCommand = null
+
+            // 2. Kill remaining processes on the remote host (bootRun, java, gradle)
+            val client = sshClient
+            if (client != null && client.isConnected) {
+                try {
+                    val stopCmd = "pkill -f bootRun 2>/dev/null; pkill -f 'java.*jar' 2>/dev/null; pkill -f 'org.gradle.launcher.daemon' 2>/dev/null; true"
+                    val session = client.startSession()
+                    val killCommand = session.exec(stopCmd)
+                    killCommand.join(4, TimeUnit.SECONDS)
+                    session.close()
+                } catch (e: Exception) {
+                    onOutput("[STOP WARNING] " + (e.message ?: e.toString()) + "\n")
+                }
+            }
+
+            isProcessRunning = false
+            runningCommand = null
+            com.intellij.ide.ActivityTracker.getInstance().inc()
+            try {
+                project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).processStateChanged(false, null)
+            } catch (_: Exception) {}
+            onComplete()
         }
     }
 

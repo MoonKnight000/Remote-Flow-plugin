@@ -2,6 +2,8 @@ package uz.remote.flow.ui
 
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
@@ -11,6 +13,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import uz.remote.flow.logging.LogCategory
+import uz.remote.flow.logging.LogLevel
 import uz.remote.flow.logging.RemoteFlowLogService
 import uz.remote.flow.settings.RemoteFlowConfigurable
 import uz.remote.flow.settings.RemoteFlowSettings
@@ -34,13 +37,25 @@ class RemoteFlowLogPanel(private val project: Project) : JPanel(BorderLayout(0, 
     private val filterTextField = JBTextField()
     private val serverComboBox = JComboBox<String>()
     private val categoryComboBox = JComboBox<LogCategory>(LogCategory.values())
+    private val levelComboBox = JComboBox<LogLevel>(LogLevel.values())
     private val btnEditConfig = JButton("Settings", AllIcons.General.Settings)
 
     init {
         border = JBUI.Borders.empty(4)
 
         add(createToolbarPanel(), BorderLayout.NORTH)
-        add(logService.consoleView.component, BorderLayout.CENTER)
+
+        // Native console panel with vertical action toolbar (Scroll to End, Soft wraps, Find, Clear)
+        val consolePanel = JPanel(BorderLayout())
+        consolePanel.add(logService.consoleView.component, BorderLayout.CENTER)
+
+        val actionGroup = DefaultActionGroup()
+        actionGroup.addAll(*logService.consoleView.createConsoleActions())
+        val consoleToolbar = ActionManager.getInstance().createActionToolbar("RemoteFlowLogConsole", actionGroup, false)
+        consoleToolbar.targetComponent = logService.consoleView.component
+        consolePanel.add(consoleToolbar.component, BorderLayout.WEST)
+
+        add(consolePanel, BorderLayout.CENTER)
 
         setupListeners()
         refreshServerComboBox()
@@ -67,7 +82,7 @@ class RemoteFlowLogPanel(private val project: Project) : JPanel(BorderLayout(0, 
         val root = JPanel(BorderLayout(4, 0))
         root.border = JBUI.Borders.empty(2, 4, 4, 4)
 
-        // Title row (similar to GitHub Copilot MCP Log)
+        // Title row
         val titleLabel = JBLabel("Remote Flow Unified Log")
         titleLabel.font = titleLabel.font.deriveFont(Font.BOLD, 13f)
         titleLabel.border = JBUI.Borders.empty(2, 4, 4, 4)
@@ -82,20 +97,25 @@ class RemoteFlowLogPanel(private val project: Project) : JPanel(BorderLayout(0, 
         // 2. Filter Search Field
         toolbar.add(JBLabel("Filter:"))
         filterTextField.emptyText.text = "Search logs..."
-        filterTextField.preferredSize = Dimension(180, 26)
+        filterTextField.preferredSize = Dimension(170, 26)
         toolbar.add(filterTextField)
 
         // 3. Server selector
         toolbar.add(JBLabel("Server:"))
-        serverComboBox.preferredSize = Dimension(140, 26)
+        serverComboBox.preferredSize = Dimension(130, 26)
         toolbar.add(serverComboBox)
 
         // 4. Category selector
         toolbar.add(JBLabel("Category:"))
-        categoryComboBox.preferredSize = Dimension(130, 26)
+        categoryComboBox.preferredSize = Dimension(125, 26)
         toolbar.add(categoryComboBox)
 
-        // 5. Edit Config button
+        // 5. Level selector
+        toolbar.add(JBLabel("Level:"))
+        levelComboBox.preferredSize = Dimension(120, 26)
+        toolbar.add(levelComboBox)
+
+        // 6. Edit Config button
         btnEditConfig.toolTipText = "Open Remote Flow settings"
         btnEditConfig.addActionListener {
             ShowSettingsUtil.getInstance().showSettingsDialog(project, RemoteFlowConfigurable::class.java)
@@ -125,13 +145,18 @@ class RemoteFlowLogPanel(private val project: Project) : JPanel(BorderLayout(0, 
         categoryComboBox.addActionListener {
             triggerFilterUpdate()
         }
+
+        levelComboBox.addActionListener {
+            triggerFilterUpdate()
+        }
     }
 
     private fun triggerFilterUpdate() {
         val selectedCat = categoryComboBox.selectedItem as? LogCategory ?: LogCategory.ALL
         val selectedServer = serverComboBox.selectedItem as? String ?: "All Servers"
+        val selectedLevel = levelComboBox.selectedItem as? LogLevel ?: LogLevel.ALL
         val query = filterTextField.text.trim()
-        logService.applyFilters(selectedCat, selectedServer, query)
+        logService.applyFilters(selectedCat, selectedServer, selectedLevel, query)
     }
 
     private fun refreshServerComboBox() {

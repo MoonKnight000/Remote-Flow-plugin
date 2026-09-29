@@ -31,6 +31,8 @@
                     secondary="true"
                     anchor="bottom"
                     factoryClass="uz.remote.flow.ui.RemoteFlowLogToolWindowFactory"/>
+
+        <programRunner implementation="uz.remote.flow.execution.RemoteFlowProgramRunner" order="first"/>
     </extensions>
 
     <projectListeners>
@@ -49,22 +51,30 @@
             <action id="RemoteFlow.SyncAction"
                     class="uz.remote.flow.actions.RemoteFlowSyncAction"
                     text="Fast Sync Project to Server"
-                    description="Sync all project changes to active remote server"/>
+                    description="Sync all project changes to active remote server">
+                <keyboard-shortcut keymap="$default" first-keystroke="alt shift U"/>
+            </action>
             <action id="RemoteFlow.RunAction"
                     class="uz.remote.flow.actions.RemoteFlowRunAction"
                     text="Remote Run"
                     description="Build and run application on remote server"
-                    icon="icons/remoteRun.svg"/>
+                    icon="icons/remoteRun.svg">
+                <keyboard-shortcut keymap="$default" first-keystroke="alt shift R"/>
+            </action>
             <action id="RemoteFlow.DebugAction"
                     class="uz.remote.flow.actions.RemoteFlowDebugAction"
                     text="Remote Debug"
-                    description="Run application on remote server in JVM debug mode"
-                    icon="icons/remoteDebug.svg"/>
+                    description="Run application on remote server in JVM debug mode (port 5005)"
+                    icon="icons/remoteDebug.svg">
+                <keyboard-shortcut keymap="$default" first-keystroke="alt shift D"/>
+            </action>
             <action id="RemoteFlow.StopAction"
                     class="uz.remote.flow.actions.RemoteFlowStopAction"
                     text="Remote Stop"
                     description="Stop running application on active remote server"
-                    icon="icons/remoteStop.svg"/>
+                    icon="icons/remoteStop.svg">
+                <keyboard-shortcut keymap="$default" first-keystroke="alt shift S"/>
+            </action>
             <action id="RemoteFlow.TerminalAction"
                     class="uz.remote.flow.actions.RemoteFlowTerminalAction"
                     text="Open Remote SSH Terminal"
@@ -80,7 +90,9 @@
             <action id="RemoteFlow.OpenLogAction"
                     class="uz.remote.flow.actions.RemoteFlowOpenLogAction"
                     text="Show Remote Flow Logs"
-                    description="Open Remote Flow log console in bottom tool window"/>
+                    description="Open Remote Flow log console in bottom tool window">
+                <keyboard-shortcut keymap="$default" first-keystroke="alt shift L"/>
+            </action>
             <separator/>
             <action id="RemoteFlow.OpenSettingsAction"
                     class="uz.remote.flow.actions.RemoteFlowOpenSettingsAction"
@@ -89,26 +101,12 @@
         </group>
 
         <!-- Main Top Toolbar Run Group (New UI & Classic UI) -->
-        <group id="RemoteFlow.TopToolbarGroup" text="Remote Flow Run" description="Remote Flow execution controls">
-            <add-to-group group-id="MainToolbarRight" anchor="after" relative-to-action="RunToolbarWidgetAction"/>
-            <add-to-group group-id="ToolbarRunGroup" anchor="last"/>
-            <separator/>
-            <action id="RemoteFlow.TopToolbarRunAction"
-                    class="uz.remote.flow.actions.RemoteFlowRunAction"
-                    text="Remote Run"
-                    description="Sync, build and run application on remote server"
-                    icon="icons/remoteRun.svg"/>
-            <action id="RemoteFlow.TopToolbarDebugAction"
-                    class="uz.remote.flow.actions.RemoteFlowDebugAction"
-                    text="Remote Debug"
-                    description="Run application on remote server in JVM debug mode (port 5005)"
-                    icon="icons/remoteDebug.svg"/>
-            <action id="RemoteFlow.TopToolbarStopAction"
-                    class="uz.remote.flow.actions.RemoteFlowStopAction"
-                    text="Remote Stop"
-                    description="Stop application on remote server"
-                    icon="icons/remoteStop.svg"/>
-            <separator/>
+        <group id="RemoteFlow.TopToolbarGroup" text="Remote Flow Run" description="Remote Flow execution controls" popup="false">
+            <add-to-group group-id="RunToolbarMainActionGroup" anchor="after" relative-to-action="RedesignedRunConfigurationSelector"/>
+            <add-to-group group-id="ToolbarRunGroup" anchor="after" relative-to-action="RunConfiguration"/>
+            <reference ref="RemoteFlow.RunAction"/>
+            <reference ref="RemoteFlow.DebugAction"/>
+            <reference ref="RemoteFlow.StopAction"/>
         </group>
 
         <!-- Context menu in Project View -->
