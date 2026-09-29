@@ -169,13 +169,11 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
         }
 
         val logService = uz.remote.flow.logging.RemoteFlowLogService.getInstance(project)
-        val logTw = ToolWindowManager.getInstance(project).getToolWindow("Remote Flow Log")
-        logTw?.show(null)
+        logService.showLogWindow()
 
         val doRun = {
             val rawCmd = p.runCommand.ifBlank { "./gradlew bootRun" }
-            val javaPrefix = uz.remote.flow.ssh.resolveJavaEnvPrefix(p.javaHome)
-            val cmd = "${javaPrefix}export TERM=xterm-256color; export FORCE_COLOR=1; export SPRING_OUTPUT_ANSI_ENABLED=ALWAYS; sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
+            val cmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(rawCmd, p.javaHome)
 
             logService.log("[REMOTE RUN] 1. Syncing latest code to server ${p.name}...\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
             syncMgr.syncSingleServer(
@@ -251,13 +249,11 @@ class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in 
         }
 
         val logService = uz.remote.flow.logging.RemoteFlowLogService.getInstance(project)
-        val logTw = ToolWindowManager.getInstance(project).getToolWindow("Remote Flow Log")
-        logTw?.show(null)
+        logService.showLogWindow()
 
         val doDebug = {
             val rawCmd = p.debugCommand.ifBlank { "./gradlew bootRun --debug-jvm" }
-            val javaPrefix = uz.remote.flow.ssh.resolveJavaEnvPrefix(p.javaHome)
-            val cmd = "${javaPrefix}export TERM=xterm-256color; export FORCE_COLOR=1; export SPRING_OUTPUT_ANSI_ENABLED=ALWAYS; sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
+            val cmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(rawCmd, p.javaHome)
 
             logService.log("[REMOTE DEBUG] 1. Syncing code to remote server ${p.name}...\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
             syncMgr.syncSingleServer(
@@ -327,8 +323,7 @@ class RemoteFlowStopAction : AnAction("Remote Stop", "Stop running application o
         if (p == null || p.host.isBlank()) return
 
         val logService = uz.remote.flow.logging.RemoteFlowLogService.getInstance(project)
-        val logTw = ToolWindowManager.getInstance(project).getToolWindow("Remote Flow Log")
-        logTw?.show(null)
+        logService.showLogWindow()
 
         if (!connMgr.isConnected) {
             connMgr.notifyUser("Remote Flow", "Server is not connected.", NotificationType.WARNING)
@@ -384,8 +379,7 @@ class RemoteFlowBrowseFilesAction : AnAction("Browse Remote Files...", "Explore 
 class RemoteFlowOpenLogAction : AnAction("Show Remote Flow Logs", "Open unified execution logs tool window", RemoteFlowIcons.REMOTE_FLOW) {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val tw = ToolWindowManager.getInstance(project).getToolWindow("Remote Flow Log")
-        tw?.show(null)
+        uz.remote.flow.logging.RemoteFlowLogService.getInstance(project).showLogWindow()
     }
 }
 

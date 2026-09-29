@@ -49,11 +49,16 @@ class RemoteFlowLogService(private val project: Project) {
         serverName: String = "",
         isError: Boolean = false
     ) {
+        val sanitized = uz.remote.flow.ssh.cleanProgressRemnants(message)
+        if (cleanAnsiText(sanitized).trim().isEmpty()) {
+            return
+        }
+
         val entry = LogEntry(
             timestamp = System.currentTimeMillis(),
             category = category,
             serverName = serverName,
-            message = message,
+            message = sanitized,
             isError = isError
         )
 
@@ -77,6 +82,18 @@ class RemoteFlowLogService(private val project: Project) {
         }
         ApplicationManager.getApplication().invokeLater {
             consoleView.clear()
+        }
+    }
+
+    fun showLogWindow() {
+        ApplicationManager.getApplication().invokeLater {
+            if (project.isDisposed) return@invokeLater
+            val tw = com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("Remote Flow Log")
+            if (tw != null) {
+                tw.isAvailable = true
+                tw.show(null)
+                tw.activate(null)
+            }
         }
     }
 

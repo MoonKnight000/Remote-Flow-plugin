@@ -590,7 +590,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         btnOpenBottomLog.preferredSize = Dimension(320, 36)
         btnOpenBottomLog.toolTipText = "Open unified Remote Flow logs window"
         btnOpenBottomLog.addActionListener {
-            com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("Remote Flow Log")?.show(null)
+            logService.showLogWindow()
         }
         val btnRow = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0))
         btnRow.add(btnOpenBottomLog)
@@ -870,6 +870,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     }
 
     private fun executeRemoteRun() {
+        logService.showLogWindow()
         if (!connectionManager.isConnected) {
             log("[WARNING] Not connected to server! Please click 'Connect' first.\n", true)
             return
@@ -878,8 +879,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val p = settings.activeProfile
         p.runCommand = runCommandField.text.trim()
         val rawCmd = p.runCommand
-        val javaPrefix = uz.remote.flow.ssh.resolveJavaEnvPrefix(p.javaHome)
-        val cmd = "${javaPrefix}export TERM=xterm-256color; export FORCE_COLOR=1; export SPRING_OUTPUT_ANSI_ENABLED=ALWAYS; sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
+        val cmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(rawCmd, p.javaHome)
         log("[REMOTE RUN] 1. Syncing latest code to server...\n")
 
         syncManager.syncSingleServer(
@@ -906,6 +906,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     }
 
     private fun executeRemoteDebug() {
+        logService.showLogWindow()
         if (!connectionManager.isConnected) {
             log("[WARNING] Not connected to server! Please click 'Connect' first.\n", true)
             return
@@ -914,8 +915,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val p = settings.activeProfile
         p.debugCommand = debugCommandField.text.trim()
         val rawCmd = p.debugCommand
-        val javaPrefix = uz.remote.flow.ssh.resolveJavaEnvPrefix(p.javaHome)
-        val cmd = "${javaPrefix}export TERM=xterm-256color; export FORCE_COLOR=1; export SPRING_OUTPUT_ANSI_ENABLED=ALWAYS; sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
+        val cmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(rawCmd, p.javaHome)
         log("[REMOTE DEBUG] 1. Syncing code to remote server...\n")
 
         syncManager.syncSingleServer(
@@ -937,6 +937,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     }
 
     private fun executeRemoteStop() {
+        logService.showLogWindow()
         log("[STOPPING] Sending stop command to remote application...\n")
         val stopCmd = "pkill -f bootRun 2>/dev/null; pkill -f 'java.*jar' 2>/dev/null; echo 'App stopped.'"
         connectionManager.executeRemoteCommand(

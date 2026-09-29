@@ -197,6 +197,24 @@ fun cleanAnsiText(text: String): String {
     return s
 }
 
+fun buildRemoteExecutionCommand(rawCmd: String, javaHome: String): String {
+    val javaPrefix = resolveJavaEnvPrefix(javaHome)
+    var cmd = rawCmd.trim()
+    // If executing Gradle, ensure plain console mode to prevent interactive ASCII progress bars from corrupting logs
+    if ((cmd.contains("gradlew") || cmd.contains("gradle")) && !cmd.contains("--console")) {
+        cmd = "$cmd --console=plain"
+    }
+    return "${javaPrefix}export GRADLE_OPTS=\"-Dorg.gradle.console=plain \${GRADLE_OPTS:-}\"; export TERM=xterm-256color; export FORCE_COLOR=1; export SPRING_OUTPUT_ANSI_ENABLED=ALWAYS; sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $cmd"
+}
+
+fun cleanProgressRemnants(text: String): String {
+    if (text.isEmpty()) return text
+    // Strip Gradle/Maven interactive progress bars, e.g. │█████████████▎·│ 88% EXECUTING [14s]> :bootRun
+    var s = text.replace(Regex("""[│|]?[█\s▎·#=\-/\\<]*\d+%\s*(EXECUTING|WAITING|CONFIGURING|BUILDING|RUNNING)(\s*\[[^\]\n]*\])?(>\s*:[a-zA-Z0-9_\-:]+)?"""), "")
+    s = s.replace(Regex("""[│|][█\s▎·#=\-/\\<]+[│|]"""), "")
+    return s.trim()
+}
+
 data class RemoteConfig(
     val profiles: MutableList<ServerProfile> = mutableListOf(),
     var activeProfileIndex: Int = 0

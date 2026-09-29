@@ -427,8 +427,9 @@ class RemoteConnectionManager(private val project: Project) {
                         val raw = line ?: ""
                         val parts = raw.split('\r')
                         for (part in parts) {
-                            if (part.isNotBlank()) {
-                                onOutput(part + "\n")
+                            val cleaned = cleanProgressRemnants(part)
+                            if (cleaned.isNotBlank()) {
+                                onOutput(cleaned + "\n")
                             }
                         }
                     }
