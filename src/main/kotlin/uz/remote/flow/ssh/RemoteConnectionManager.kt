@@ -416,15 +416,22 @@ class RemoteConnectionManager(private val project: Project) {
             }
 
             try {
-                val fullCmd = if (workingDir.isNotBlank()) "cd " + workingDir + " && " + cmd else cmd
+                val fullCmd = if (workingDir.isNotBlank()) "cd \"$workingDir\" && $cmd" else cmd
                 val session = client.startSession()
                 session.allocateDefaultPTY()
                 val command = session.exec(fullCmd)
 
-                BufferedReader(InputStreamReader(command.inputStream)).use { reader ->
+                BufferedReader(InputStreamReader(command.inputStream, java.nio.charset.StandardCharsets.UTF_8)).use { reader ->
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
-                        onOutput(line + "\n")
+                        val raw = line ?: ""
+                        val parts = raw.split('\r')
+                        for (part in parts) {
+                            val clean = cleanAnsiText(part)
+                            if (clean.isNotBlank()) {
+                                onOutput(clean + "\n")
+                            }
+                        }
                     }
                 }
 
@@ -435,6 +442,42 @@ class RemoteConnectionManager(private val project: Project) {
             } catch (e: Exception) {
                 onOutput("[ERROR]: " + e.message + "\n")
                 onComplete(-1)
+            }
+        }
+    }
+
+    fun detectRemoteJava(
+        profile: ServerProfile = config.activeProfile,
+        onResult: (List<String>) -> Unit
+    ) {
+        executor.submit {
+            try {
+                withSshClient(profile) { client ->
+                    val checkCmd = "which java 2>/dev/null; ls -d /usr/lib/jvm/* 2>/dev/null; ls -d /usr/java/* 2>/dev/null; ls -d /opt/java/* 2>/dev/null; ls -d /opt/jdk* 2>/dev/null; ls -d \$HOME/.sdkman/candidates/java/* 2>/dev/null; [ -n \"\$JAVA_HOME\" ] && echo \"\$JAVA_HOME\""
+                    val session = client.startSession()
+                    val command = session.exec(checkCmd)
+                    val output = BufferedReader(InputStreamReader(command.inputStream, java.nio.charset.StandardCharsets.UTF_8)).readText()
+                    command.join(10, TimeUnit.SECONDS)
+                    session.close()
+
+                    val rawLines = output.lines()
+                    val resultList = mutableListOf<String>()
+                    for (raw in rawLines) {
+                        val line = raw.trim()
+                        if (line.isBlank() || line.contains("No such file") || line.contains("cannot access") || line.contains("Permission denied")) continue
+                        val clean = when {
+                            line.endsWith("/bin/java") -> line.removeSuffix("/bin/java")
+                            line.endsWith("/bin") -> line.removeSuffix("/bin")
+                            else -> line
+                        }.trimEnd('/', '\\')
+                        if (clean.isNotBlank() && !resultList.contains(clean)) {
+                            resultList.add(clean)
+                        }
+                    }
+                    onResult(resultList)
+                }
+            } catch (_: Exception) {
+                onResult(emptyList())
             }
         }
     }

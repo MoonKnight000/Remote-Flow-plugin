@@ -66,24 +66,19 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
     // Header Controls
     private val profileComboBox = JComboBox<ServerProfile>()
-    private val btnAddServer = JButton("➕")
-    private val btnEditServer = JButton("✏ Edit")
     private val btnConnectToggle = JButton("⚡ Connect")
     private val statusDot = JLabel("● ")
     private val statusText = JLabel("Disconnected")
-    private val btnSyncHeader = JButton("🔄 Sync")
-    private val btnFilesHeader = JButton("📁 Files")
-    private val btnTerminalHeader = JButton("💻 Terminal")
-    private val btnPingApi = JButton("🩺 Ping API")
     private val apiHealthLabel = JLabel("API: --")
-    private val chkAutoSyncHeader = JBCheckBox("⚡ Auto-Sync")
-    private val btnConfigsHeader = JButton("⚙ Configs")
     private val btnSettings = JButton("⚙ Settings")
 
     // Remote Git Status Labels
     private val lblGitBranch = JLabel("🌿 Branch: -")
     private val lblGitCommit = JLabel("")
     private val lblGitStatus = JLabel("")
+
+    // Remote Java and server overview label
+    private val lblServerJava = JLabel("-")
 
     // Remote Files Explorer Panel & Unified Logger
     val filesPanel = RemoteFileExplorerPanel(project)
@@ -193,9 +188,9 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val header = JPanel(BorderLayout(6, 0))
         header.border = IdeBorderFactory.createTitledBorder("Active Server Control", false)
 
-        val left = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))
+        val left = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
         left.add(JBLabel("Server:"))
-        profileComboBox.preferredSize = Dimension(170, 26)
+        profileComboBox.preferredSize = Dimension(190, 26)
         profileComboBox.addActionListener {
             val selected = profileComboBox.selectedItem as? ServerProfile
             if (selected != null && profileComboBox.selectedIndex != settings.activeProfileIndex) {
@@ -205,37 +200,6 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
             }
         }
         left.add(profileComboBox)
-
-        btnAddServer.toolTipText = "Yangi server qo'shish"
-        btnAddServer.addActionListener {
-            val newP = ServerProfile(
-                name = "Server " + (settings.profiles.size + 1),
-                host = "192.168.1.100",
-                localProjectPath = project.basePath ?: "",
-                remoteProjectPath = "/root/remote-flow/" + project.name
-            )
-            val dialog = ServerProfileEditDialog(project, newP, isNew = true)
-            if (dialog.showAndGet()) {
-                refreshProfileComboBox()
-                loadProfileData(newP)
-            }
-        }
-        left.add(btnAddServer)
-
-        btnEditServer.toolTipText = "Faol server parametrlarini tahrirlash"
-        btnEditServer.addActionListener {
-            val current = settings.activeProfileOrNull
-            if (current == null) {
-                ShowSettingsUtil.getInstance().showSettingsDialog(project, RemoteFlowConfigurable::class.java)
-                return@addActionListener
-            }
-            val dialog = ServerProfileEditDialog(project, current, isNew = false)
-            if (dialog.showAndGet()) {
-                refreshProfileComboBox()
-                loadProfileData(current)
-            }
-        }
-        left.add(btnEditServer)
 
         btnConnectToggle.font = btnConnectToggle.font.deriveFont(Font.BOLD)
         btnConnectToggle.addActionListener {
@@ -252,40 +216,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         statusText.font = statusText.font.deriveFont(Font.BOLD, 11f)
         left.add(statusText)
 
-        chkAutoSyncHeader.toolTipText = "Fayl saqlanganda (Ctrl+S) avtomatik ravishda serverga sinxronizatsiya qilish"
-        chkAutoSyncHeader.addActionListener {
-            val p = settings.activeProfileOrNull ?: return@addActionListener
-            p.autoSyncOnSave = chkAutoSyncHeader.isSelected
-        }
-        left.add(chkAutoSyncHeader)
-
-        val right = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 2))
-
-        btnSyncHeader.toolTipText = "Kodni tezkor faol serverga yuklash"
-        btnSyncHeader.addActionListener { syncFiles() }
-        right.add(btnSyncHeader)
-
-        btnFilesHeader.toolTipText = "Serverdagi loyiha papkasi va fayllarni ko'rish"
-        btnFilesHeader.addActionListener {
-            selectTab("Files")
-            filesPanel.loadDirectory(settings.activeProfile.remoteProjectPath)
-        }
-        right.add(btnFilesHeader)
-
-        btnConfigsHeader.toolTipText = "Masofaviy .env va application.yml sozlamalarini boshqarish"
-        btnConfigsHeader.addActionListener { openRemoteConfigManager() }
-        right.add(btnConfigsHeader)
-
-        btnTerminalHeader.toolTipText = "IntelliJ IDEA Terminalida serverga SSH orqali ulanish"
-        btnTerminalHeader.addActionListener {
-            val p = settings.activeProfileOrNull ?: return@addActionListener
-            uz.remote.flow.terminal.RemoteTerminalHelper.openTerminal(project, p)
-        }
-        right.add(btnTerminalHeader)
-
-        btnPingApi.addActionListener { pingApiHealth() }
-        right.add(btnPingApi)
-        right.add(apiHealthLabel)
+        val right = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 2))
 
         val btnLogsHeader = JButton("📜 Logs")
         btnLogsHeader.toolTipText = "Pastki paneldagi Remote Flow barcha loglar oynasini ochish"
@@ -294,7 +225,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         }
         right.add(btnLogsHeader)
 
-        btnSettings.toolTipText = "Barcha serverlar va sozlamalarni ochish"
+        btnSettings.toolTipText = "Serverlarni sozlash, yangi qo'shish va Auto-Sync parametrlarini ochish"
         btnSettings.addActionListener {
             ShowSettingsUtil.getInstance().showSettingsDialog(project, RemoteFlowConfigurable::class.java)
         }
@@ -318,6 +249,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
             lblServerHost.text = "No server"
             lblServerUser.text = "No server"
             lblServerRemoteDir.text = "No server"
+            lblServerJava.text = "-"
             runCommandField.text = ""
             debugCommandField.text = ""
         }
@@ -326,7 +258,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     private fun loadProfileData(p: ServerProfile) {
         runCommandField.text = p.runCommand
         debugCommandField.text = p.debugCommand
-        chkAutoSyncHeader.isSelected = p.autoSyncOnSave
+        lblServerJava.text = if (p.javaHome.isNotBlank()) p.javaHome else "System Default"
         updateOverviewSummary(p)
         updatePortsTableData()
 
@@ -350,10 +282,12 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
             lblServerHost.text = "No server configured"
             lblServerUser.text = "-"
             lblServerRemoteDir.text = "-"
+            lblServerJava.text = "-"
         } else {
             lblServerHost.text = p.host + ":" + p.port
             lblServerUser.text = p.user + " (" + p.authType.name + ")"
             lblServerRemoteDir.text = p.remoteProjectPath
+            lblServerJava.text = if (p.javaHome.isNotBlank()) p.javaHome else "System Default"
         }
     }
 
@@ -383,7 +317,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     // TAB 1: Dashboard
     private fun createDashboardTab(): JPanel {
         val root = JPanel(BorderLayout(0, 8))
-        root.border = JBUI.Borders.empty(8)
+        root.border = JBUI.Borders.empty(6)
 
         val top = JPanel()
         top.layout = BoxLayout(top, BoxLayout.Y_AXIS)
@@ -392,7 +326,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val summaryCard = JPanel(GridBagLayout())
         summaryCard.border = IdeBorderFactory.createTitledBorder("Active Server Information", false)
         val gbc = GridBagConstraints()
-        gbc.insets = JBUI.insets(3, 6, 3, 6)
+        gbc.insets = JBUI.insets(2, 6, 2, 6)
         gbc.anchor = GridBagConstraints.WEST
 
         gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.0; summaryCard.add(JBLabel("Host Address:"), gbc)
@@ -412,15 +346,19 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         }
         gbc.gridx = 3; gbc.gridwidth = 1; gbc.weightx = 0.0; summaryCard.add(btnOpenDir, gbc)
 
+        gbc.gridx = 0; gbc.gridy = 2; gbc.weightx = 0.0; summaryCard.add(JBLabel("Remote Java:"), gbc)
+        gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; summaryCard.add(lblServerJava, gbc)
+        gbc.gridwidth = 1
+
         top.add(summaryCard)
-        top.add(Box.createVerticalStrut(6))
+        top.add(Box.createVerticalStrut(4))
 
         // Resource Meters Card
-        val metersCard = JPanel(BorderLayout(0, 6))
+        val metersCard = JPanel(BorderLayout(0, 4))
         metersCard.border = IdeBorderFactory.createTitledBorder("Hardware Resource Monitor", false)
 
         val metersToolbar = JPanel(BorderLayout(6, 0))
-        metersToolbar.border = JBUI.Borders.empty(0, 4, 4, 4)
+        metersToolbar.border = JBUI.Borders.empty(0, 4, 2, 4)
 
         val modePanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
         modePanel.add(JBLabel("Rejim:"))
@@ -439,14 +377,14 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         metersToolbar.add(btnPanel, BorderLayout.EAST)
         metersCard.add(metersToolbar, BorderLayout.NORTH)
 
-        val metersGrid = JPanel(GridLayout(3, 1, 0, 6))
+        val metersGrid = JPanel(GridLayout(3, 1, 0, 4))
         metersGrid.add(createMeterRow("CPU Usage:", cpuBar, cpuLabel))
         metersGrid.add(createMeterRow("RAM Usage:", ramBar, ramLabel))
         metersGrid.add(createMeterRow("Disk (/ root):", diskBar, diskLabel))
         metersCard.add(metersGrid, BorderLayout.CENTER)
 
         top.add(metersCard)
-        top.add(Box.createVerticalStrut(6))
+        top.add(Box.createVerticalStrut(4))
 
         // Quick Actions Grid (2 rows x 3 columns)
         val quickActionCard = JPanel(GridLayout(0, 3, 6, 6))
@@ -494,11 +432,14 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         quickActionCard.add(btnRemoteConfigs)
 
         top.add(quickActionCard)
-        top.add(Box.createVerticalStrut(6))
+        top.add(Box.createVerticalStrut(4))
         top.add(createGitStatusCard())
-        top.add(Box.createVerticalStrut(6))
+        top.add(Box.createVerticalStrut(4))
 
-        val scrollPane = JBScrollPane(top)
+        val contentWrapper = JPanel(BorderLayout())
+        contentWrapper.add(top, BorderLayout.NORTH)
+
+        val scrollPane = JBScrollPane(contentWrapper)
         scrollPane.border = null
         root.add(scrollPane, BorderLayout.CENTER)
         return root
@@ -845,9 +786,13 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         terminalConsoleView.print("remote:~# $cmd\n", ConsoleViewContentType.USER_INPUT)
         terminalInputField.text = ""
 
+        val p = settings.activeProfile
+        val javaPrefix = uz.remote.flow.ssh.resolveJavaEnvPrefix(p.javaHome)
+        val finalCmd = if (javaPrefix.isNotBlank()) "${javaPrefix}$cmd" else cmd
+
         connectionManager.executeRemoteCommand(
-            cmd = cmd,
-            workingDir = settings.activeProfile.remoteProjectPath,
+            cmd = finalCmd,
+            workingDir = p.remoteProjectPath,
             onOutput = { line ->
                 ApplicationManager.getApplication().invokeLater {
                     terminalConsoleView.print(line, ConsoleViewContentType.NORMAL_OUTPUT)
@@ -875,7 +820,8 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val p = settings.activeProfile
         p.runCommand = runCommandField.text.trim()
         val rawCmd = p.runCommand
-        val cmd = "sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
+        val javaPrefix = uz.remote.flow.ssh.resolveJavaEnvPrefix(p.javaHome)
+        val cmd = "${javaPrefix}export TERM=dumb; sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
         log("[REMOTE RUN] 1. Eng yangi kodlar serverga sinxronlanmoqda...\n")
 
         syncManager.syncSingleServer(
@@ -885,7 +831,8 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
                 if (!success) {
                     log("[REMOTE RUN WARNING] Sinxronizatsiyada ogohlantirish bo'ldi, buyruq bajarilmoqda...\n", true)
                 }
-                log("[REMOTE RUN] 2. Masofaviy buyruq serverda bajarilmoqda: $rawCmd\n")
+                val javaInfo = if (p.javaHome.isNotBlank()) " (Java: ${p.javaHome})" else ""
+                log("[REMOTE RUN] 2. Masofaviy buyruq serverda bajarilmoqda$javaInfo: $rawCmd\n")
                 connectionManager.executeRemoteCommand(
                     cmd = cmd,
                     workingDir = p.remoteProjectPath,
@@ -909,14 +856,16 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val p = settings.activeProfile
         p.debugCommand = debugCommandField.text.trim()
         val rawCmd = p.debugCommand
-        val cmd = "sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
+        val javaPrefix = uz.remote.flow.ssh.resolveJavaEnvPrefix(p.javaHome)
+        val cmd = "${javaPrefix}export TERM=dumb; sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
         log("[REMOTE DEBUG] 1. Kodlar serverga yuklanmoqda...\n")
 
         syncManager.syncSingleServer(
             profile = p,
             onLog = { log(it) },
             onComplete = { _ ->
-                log("[REMOTE DEBUG] 2. Ilova debug rejimida (port 5005) serverda ishga tushirilmoqda: $rawCmd\n")
+                val javaInfo = if (p.javaHome.isNotBlank()) " (Java: ${p.javaHome})" else ""
+                log("[REMOTE DEBUG] 2. Ilova debug rejimida (port 5005) serverda ishga tushirilmoqda$javaInfo: $rawCmd\n")
                 connectionManager.executeRemoteCommand(
                     cmd = cmd,
                     workingDir = p.remoteProjectPath,

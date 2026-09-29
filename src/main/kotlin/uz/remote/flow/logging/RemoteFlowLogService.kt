@@ -114,12 +114,13 @@ class RemoteFlowLogService(private val project: Project) {
         val timeStr = timeFormat.format(Date(entry.timestamp))
         val serverStr = if (entry.serverName.isNotBlank()) "[${entry.serverName}] " else ""
         val categoryStr = if (entry.category != LogCategory.ALL) "${entry.category.badge} " else ""
-        val line = "[$timeStr] $categoryStr$serverStr${entry.message}"
+        val cleanMsg = uz.remote.flow.ssh.cleanAnsiText(entry.message)
+        val line = "[$timeStr] $categoryStr$serverStr$cleanMsg"
 
         val contentType = when {
             entry.isError -> ConsoleViewContentType.ERROR_OUTPUT
-            entry.message.contains("[ERROR]") || entry.message.contains("FAILED") -> ConsoleViewContentType.ERROR_OUTPUT
-            entry.message.contains("[SUCCESS]") || entry.message.contains("OK") -> ConsoleViewContentType.USER_INPUT
+            cleanMsg.contains("[ERROR]") || cleanMsg.contains("FAILED") -> ConsoleViewContentType.ERROR_OUTPUT
+            cleanMsg.contains("[SUCCESS]") || cleanMsg.contains("OK") -> ConsoleViewContentType.USER_INPUT
             else -> ConsoleViewContentType.NORMAL_OUTPUT
         }
 

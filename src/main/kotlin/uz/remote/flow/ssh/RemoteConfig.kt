@@ -38,6 +38,7 @@ data class ServerProfile(
     var remoteProjectPath: String = "",
     var syncMode: SyncMode = SyncMode.MANUAL,
     var syncIntervalMinutes: Int = 5,
+    var javaHome: String = "",
     var runCommand: String = "./gradlew bootRun",
     var debugCommand: String = "./gradlew bootRun --debug-jvm",
     var excludePatterns: String = defaultExcludes(),
@@ -62,6 +63,7 @@ data class ServerProfile(
             remoteProjectPath = remoteProjectPath,
             syncMode = syncMode,
             syncIntervalMinutes = syncIntervalMinutes,
+            javaHome = javaHome,
             runCommand = runCommand,
             debugCommand = debugCommand,
             excludePatterns = excludePatterns,
@@ -171,6 +173,28 @@ fun detectRsyncPath(): String {
 
 fun cleanServerName(name: String): String {
     return name.replace(Regex("""(\s*\(\s*Copy\s*\))+""", RegexOption.IGNORE_CASE), "").trim()
+}
+
+fun resolveJavaEnvPrefix(javaHome: String): String {
+    val trimmed = javaHome.trim()
+    if (trimmed.isBlank()) return ""
+    val home = when {
+        trimmed.endsWith("/bin/java") -> trimmed.removeSuffix("/bin/java")
+        trimmed.endsWith("/bin") -> trimmed.removeSuffix("/bin")
+        else -> trimmed
+    }.trimEnd('/', '\\')
+    return "export JAVA_HOME=\"$home\"; export PATH=\"$home/bin:\$PATH\"; "
+}
+
+fun cleanAnsiText(text: String): String {
+    if (text.isEmpty()) return text
+    var s = text.replace(Regex("""\u001B\[[0-9;?]*[ -/]*[@-~]"""), "")
+    s = s.replace(Regex("""\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)"""), "")
+    s = s.replace(Regex("""\u001B[@-Z\\-_]"""), "")
+    s = s.replace(Regex("""\[\d+[a-zA-Z]"""), "")
+    s = s.replace(Regex("""\[\?[0-9]+[a-zA-Z]"""), "")
+    s = s.replace("\r", "")
+    return s
 }
 
 data class RemoteConfig(

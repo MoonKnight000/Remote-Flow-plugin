@@ -48,6 +48,8 @@ class ServerProfileEditDialog(
     private val rsyncPathField = TextFieldWithBrowseButton(JBTextField())
     private val btnAutoDetectRsync = JButton("🔍 Auto")
 
+    private val javaHomeField = JBTextField(profile.javaHome)
+    private val btnAutoDetectJava = JButton("🔍 Auto")
     private val runCommandField = JBTextField(profile.runCommand)
     private val debugCommandField = JBTextField(profile.debugCommand)
 
@@ -111,6 +113,7 @@ class ServerProfileEditDialog(
         }
         excludePatternsField.text = profile.excludePatterns.ifBlank { uz.remote.flow.ssh.defaultExcludes() }
         rsyncPathField.text = profile.rsyncPath
+        javaHomeField.text = profile.javaHome
         chkAutoSyncOnSave.isSelected = profile.autoSyncOnSave
     }
 
@@ -320,22 +323,64 @@ class ServerProfileEditDialog(
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(rsyncPanel, gbc)
         gbc.gridwidth = 1
 
-        // Row 9: Run Command
-        gbc.gridx = 0; gbc.gridy = 9; gbc.weightx = 0.0; form.add(JBLabel("Run Command:"), gbc)
+        // Row 9: Remote Java (JAVA_HOME)
+        gbc.gridx = 0; gbc.gridy = 9; gbc.weightx = 0.0; form.add(JBLabel("Remote Java:"), gbc)
+        val javaPanel = JPanel(BorderLayout(4, 0))
+        javaHomeField.emptyText.text = "Masofaviy Java / JAVA_HOME (masalan: /usr/lib/jvm/java-17-openjdk-amd64)"
+        javaPanel.add(javaHomeField, BorderLayout.CENTER)
+        val jBtns = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0))
+        btnAutoDetectJava.toolTipText = "Serverdan mavjud Java o'rnatmalarini aniqlash"
+        btnAutoDetectJava.addActionListener {
+            val temp = profile.copyProfile()
+            applyToProfile(temp)
+            btnAutoDetectJava.isEnabled = false
+            btnAutoDetectJava.text = "..."
+            connectionManager.detectRemoteJava(temp) { list ->
+                ApplicationManager.getApplication().invokeLater {
+                    btnAutoDetectJava.isEnabled = true
+                    btnAutoDetectJava.text = "🔍 Auto"
+                    if (list.isEmpty()) {
+                        Messages.showInfoMessage(project, "Masofaviy serverda Java avtomatik aniqlanmadi. Qo'lda kiriting.", "Remote Java")
+                    } else if (list.size == 1) {
+                        javaHomeField.text = list[0]
+                        Messages.showInfoMessage(project, "Remote Java topildi:\n${list[0]}", "Java Topildi")
+                    } else {
+                        val chosen = Messages.showEditableChooseDialog(
+                            "Serverda quyidagi Java versiyalari topildi. Keraklisini tanlang:",
+                            "Remote Java Tanlash",
+                            Messages.getQuestionIcon(),
+                            list.toTypedArray(),
+                            list[0],
+                            null
+                        )
+                        if (!chosen.isNullOrBlank()) {
+                            javaHomeField.text = chosen
+                        }
+                    }
+                }
+            }
+        }
+        jBtns.add(btnAutoDetectJava)
+        javaPanel.add(jBtns, BorderLayout.EAST)
+        gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(javaPanel, gbc)
+        gbc.gridwidth = 1
+
+        // Row 10: Run Command
+        gbc.gridx = 0; gbc.gridy = 10; gbc.weightx = 0.0; form.add(JBLabel("Run Command:"), gbc)
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(runCommandField, gbc)
         gbc.gridwidth = 1
 
-        // Row 10: Debug Command
-        gbc.gridx = 0; gbc.gridy = 10; gbc.weightx = 0.0; form.add(JBLabel("Debug Command:"), gbc)
+        // Row 11: Debug Command
+        gbc.gridx = 0; gbc.gridy = 11; gbc.weightx = 0.0; form.add(JBLabel("Debug Command:"), gbc)
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(debugCommandField, gbc)
         gbc.gridwidth = 1
 
-        // Row 11: Auto-Sync on Save
-        gbc.gridx = 0; gbc.gridy = 11; gbc.gridwidth = 4; gbc.weightx = 1.0
+        // Row 12: Auto-Sync on Save
+        gbc.gridx = 0; gbc.gridy = 12; gbc.gridwidth = 4; gbc.weightx = 1.0
         form.add(chkAutoSyncOnSave, gbc)
 
-        // Row 12: Test Button
-        gbc.gridx = 0; gbc.gridy = 12; gbc.gridwidth = 4; gbc.weightx = 1.0
+        // Row 13: Test Button
+        gbc.gridx = 0; gbc.gridy = 13; gbc.gridwidth = 4; gbc.weightx = 1.0
         val btnP = JPanel(FlowLayout(FlowLayout.LEFT, 0, 4))
         btnP.add(btnTestConn)
         form.add(btnP, gbc)
@@ -356,6 +401,7 @@ class ServerProfileEditDialog(
         p.remoteProjectPath = remotePathField.text.trim()
         p.excludePatterns = excludePatternsField.text.trim().ifBlank { uz.remote.flow.ssh.defaultExcludes() }
         p.rsyncPath = rsyncPathField.text.trim()
+        p.javaHome = javaHomeField.text.trim()
         p.runCommand = runCommandField.text.trim()
         p.debugCommand = debugCommandField.text.trim()
         p.autoSyncOnSave = chkAutoSyncOnSave.isSelected

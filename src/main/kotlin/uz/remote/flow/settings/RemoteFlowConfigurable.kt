@@ -57,6 +57,10 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
     private val runCommandField = JBTextField()
     private val debugCommandField = JBTextField()
 
+    private val javaHomeField = JBTextField()
+    private val btnAutoDetectJava = JButton("🔍 Detect Remote Java")
+    private val chkAutoSyncOnSave = JBCheckBox("⚡ Auto-Sync on Save (Ctrl+S bosilganda serverga avtomatik yuklash)", false)
+
     private val autoReconnectCheck = JBCheckBox("Auto-Reconnect & Keep-Alive", true)
     private val btnTestConnection = JButton("⚡ Test Connection")
 
@@ -290,8 +294,10 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         remotePathField.text = ""
         excludePatternsField.text = uz.remote.flow.ssh.defaultExcludes()
         rsyncPathField.text = ""
+        javaHomeField.text = ""
         runCommandField.text = ""
         debugCommandField.text = ""
+        chkAutoSyncOnSave.isSelected = false
         if (::portsTableModel.isInitialized) {
             portsTableModel.rowCount = 0
         }
@@ -413,20 +419,69 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(rsyncPanel, gbc)
         gbc.gridwidth = 1
 
-        // Row 9: Commands
-        gbc.gridx = 0; gbc.gridy = 9; gbc.weightx = 0.0; form.add(JBLabel("Run Command:"), gbc)
+        // Row 9: Remote Java (JAVA_HOME)
+        gbc.gridx = 0; gbc.gridy = 9; gbc.weightx = 0.0; form.add(JBLabel("Remote Java:"), gbc)
+        val javaPanel = JPanel(BorderLayout(4, 0))
+        javaHomeField.emptyText.text = "Masofaviy Java yo'li / JAVA_HOME (masalan: /usr/lib/jvm/java-17-openjdk-amd64)"
+        javaPanel.add(javaHomeField, BorderLayout.CENTER)
+        val javaBtns = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0))
+        btnAutoDetectJava.toolTipText = "Serverdagi barcha o'rnatilgan Java versiyalarini avtomatik aniqlash"
+        btnAutoDetectJava.addActionListener {
+            saveCurrentSelection()
+            val cur = getCurrentProfile() ?: return@addActionListener
+            btnAutoDetectJava.isEnabled = false
+            btnAutoDetectJava.text = "Qidirilmoqda..."
+            connectionManager.detectRemoteJava(cur) { list ->
+                ApplicationManager.getApplication().invokeLater {
+                    btnAutoDetectJava.isEnabled = true
+                    btnAutoDetectJava.text = "🔍 Detect Remote Java"
+                    if (list.isEmpty()) {
+                        Messages.showInfoMessage(project, "Masofaviy serverda Java avtomatik aniqlanmadi. Yo'lini qo'lda kiriting (masalan: /usr/lib/jvm/java-17-openjdk-amd64)", "Remote Java")
+                    } else if (list.size == 1) {
+                        javaHomeField.text = list[0]
+                        cur.javaHome = list[0]
+                        Messages.showInfoMessage(project, "Remote Java muvaffaqiyatli aniqlandi:\n${list[0]}", "Java Topildi")
+                    } else {
+                        val chosen = Messages.showEditableChooseDialog(
+                            "Serverda quyidagi Java versiyalari topildi. Keraklisini tanlang:",
+                            "Remote Java Tanlash",
+                            Messages.getQuestionIcon(),
+                            list.toTypedArray(),
+                            list[0],
+                            null
+                        )
+                        if (!chosen.isNullOrBlank()) {
+                            javaHomeField.text = chosen
+                            cur.javaHome = chosen
+                        }
+                    }
+                }
+            }
+        }
+        javaBtns.add(btnAutoDetectJava)
+        javaPanel.add(javaBtns, BorderLayout.EAST)
+        gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(javaPanel, gbc)
+        gbc.gridwidth = 1
+
+        // Row 10: Commands
+        gbc.gridx = 0; gbc.gridy = 10; gbc.weightx = 0.0; form.add(JBLabel("Run Command:"), gbc)
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(runCommandField, gbc)
         gbc.gridwidth = 1
 
-        gbc.gridx = 0; gbc.gridy = 10; gbc.weightx = 0.0; form.add(JBLabel("Debug Command:"), gbc)
+        gbc.gridx = 0; gbc.gridy = 11; gbc.weightx = 0.0; form.add(JBLabel("Debug Command:"), gbc)
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(debugCommandField, gbc)
         gbc.gridwidth = 1
 
-        // Row 11: Buttons
+        // Row 12: Auto-Sync on Save
+        chkAutoSyncOnSave.toolTipText = "Fayl tahrirlanib saqlanganda (Ctrl+S) avtomatik serverga sinxronizatsiya qilish"
+        gbc.gridx = 0; gbc.gridy = 12; gbc.gridwidth = 4; gbc.weightx = 1.0
+        form.add(chkAutoSyncOnSave, gbc)
+
+        // Row 13: Buttons
         val btnRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
         btnRow.add(btnTestConnection)
         btnRow.add(autoReconnectCheck)
-        gbc.gridx = 0; gbc.gridy = 11; gbc.gridwidth = 4; gbc.weightx = 1.0
+        gbc.gridx = 0; gbc.gridy = 13; gbc.gridwidth = 4; gbc.weightx = 1.0
         form.add(btnRow, gbc)
 
         // Ports Table
@@ -501,8 +556,10 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         }
         excludePatternsField.text = p.excludePatterns.ifBlank { uz.remote.flow.ssh.defaultExcludes() }
         rsyncPathField.text = p.rsyncPath
+        javaHomeField.text = p.javaHome
         runCommandField.text = p.runCommand
         debugCommandField.text = p.debugCommand
+        chkAutoSyncOnSave.isSelected = p.autoSyncOnSave
         autoReconnectCheck.isSelected = settings.autoReconnect
 
         // Ports table
@@ -528,8 +585,10 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         p.remoteProjectPath = remotePathField.text.trim()
         p.excludePatterns = excludePatternsField.text.trim().ifBlank { uz.remote.flow.ssh.defaultExcludes() }
         p.rsyncPath = rsyncPathField.text.trim()
+        p.javaHome = javaHomeField.text.trim()
         p.runCommand = runCommandField.text.trim()
         p.debugCommand = debugCommandField.text.trim()
+        p.autoSyncOnSave = chkAutoSyncOnSave.isSelected
 
         if (::portsTableModel.isInitialized) {
             val updated = mutableListOf<PortMapping>()
@@ -578,6 +637,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
                 a.remoteProjectPath != b.remoteProjectPath || a.runCommand != b.runCommand ||
                 a.debugCommand != b.debugCommand || a.authType != b.authType ||
                 a.excludePatterns != b.excludePatterns || a.rsyncPath != b.rsyncPath ||
+                a.javaHome != b.javaHome || a.autoSyncOnSave != b.autoSyncOnSave ||
                 a.forwardedPorts.size != b.forwardedPorts.size
             ) {
                 return true
