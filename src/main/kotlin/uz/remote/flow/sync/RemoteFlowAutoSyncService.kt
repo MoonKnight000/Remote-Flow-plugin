@@ -39,16 +39,19 @@ class RemoteFlowAutoSyncService(private val project: Project) : FileDocumentMana
             debounceMap[remotePath] = now
 
             val content = document.text
+            val startTime = System.currentTimeMillis()
             ApplicationManager.getApplication().executeOnPooledThread {
+                val logService = uz.remote.flow.logging.RemoteFlowLogService.getInstance(project)
                 uz.remote.flow.files.RemoteFileManager(project).saveFileContent(profile, remotePath, content) { ok, err ->
+                    val duration = System.currentTimeMillis() - startTime
                     if (ok) {
                         connManager.notifyUser(
                             title = "Remote Flow: Saqlandi ⚡",
                             message = "'${file.name}' serverda yangilandi: $remotePath",
                             type = NotificationType.INFORMATION
                         )
-                        uz.remote.flow.logging.RemoteFlowLogService.getInstance(project).log(
-                            message = "[REMOTE SAVE] '${file.name}' saved to remote server: $remotePath\n",
+                        logService.log(
+                            message = "[REMOTE SAVE SUCCESS] ✅ '${file.name}' saved to remote server: $remotePath (${duration}ms)\n",
                             category = uz.remote.flow.logging.LogCategory.FILES,
                             serverName = profile.name
                         )
@@ -57,6 +60,12 @@ class RemoteFlowAutoSyncService(private val project: Project) : FileDocumentMana
                             title = "Remote Flow: Error",
                             message = "Failed to save '${file.name}' to server: $err",
                             type = NotificationType.ERROR
+                        )
+                        logService.log(
+                            message = "[REMOTE SAVE ERROR] ❌ Failed to save '${file.name}' to server: $err\n",
+                            category = uz.remote.flow.logging.LogCategory.FILES,
+                            serverName = profile.name,
+                            isError = true
                         )
                     }
                 }
@@ -88,6 +97,7 @@ class RemoteFlowAutoSyncService(private val project: Project) : FileDocumentMana
             syncManager.syncSpecificPath(
                 profile = profile,
                 relativePath = relPath,
+                isAutoSync = true,
                 onLog = { line ->
                     uz.remote.flow.logging.RemoteFlowLogService.getInstance(project).log(
                         message = line,
@@ -101,6 +111,12 @@ class RemoteFlowAutoSyncService(private val project: Project) : FileDocumentMana
                             title = "Auto-Sync ⚡",
                             message = "'$relPath' automatically uploaded to server!",
                             type = NotificationType.INFORMATION
+                        )
+                    } else {
+                        connManager.notifyUser(
+                            title = "Auto-Sync ❌",
+                            message = "Failed to upload '$relPath' to server!",
+                            type = NotificationType.ERROR
                         )
                     }
                 }

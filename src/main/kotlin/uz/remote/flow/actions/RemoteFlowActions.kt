@@ -1,6 +1,7 @@
 package uz.remote.flow.actions
 
 import com.intellij.notification.NotificationType
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
@@ -109,12 +110,20 @@ class RemoteFlowSyncSelectionAction : AnAction("Sync Selected File/Folder to Rem
         val connMgr = RemoteConnectionManager.getInstance(project)
         val settings = RemoteFlowSettings.getInstance(project)
         val p = settings.activeProfile
+        val logService = uz.remote.flow.logging.RemoteFlowLogService.getInstance(project)
 
         connMgr.notifyUser("Remote Flow", "Uploading '$relPath' to ${p.name}...")
         syncMgr.syncSpecificPath(
             profile = p,
             relativePath = relPath,
-            onLog = {},
+            isAutoSync = false,
+            onLog = { line ->
+                logService.log(
+                    message = line,
+                    category = uz.remote.flow.logging.LogCategory.SYNC,
+                    serverName = p.name
+                )
+            },
             onComplete = { success ->
                 if (success) {
                     connMgr.notifyUser("Remote Flow", "'$relPath' uploaded successfully!", NotificationType.INFORMATION)
@@ -126,76 +135,217 @@ class RemoteFlowSyncSelectionAction : AnAction("Sync Selected File/Folder to Rem
     }
 }
 
-class RemoteFlowRunAction : AnAction("Run on Remote Server", "Build and run application on remote server", RemoteFlowIcons.REMOTE_FLOW) {
+class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on remote server", RemoteFlowIcons.REMOTE_RUN) {
+
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+    override fun update(e: AnActionEvent) {
+        val project = e.project
+        if (project == null || project.isDisposed) {
+            e.presentation.isEnabledAndVisible = false
+            return
+        }
+        val settings = RemoteFlowSettings.getInstance(project)
+        val p = settings.activeProfileOrNull
+        e.presentation.isEnabledAndVisible = true
+        if (p != null) {
+            e.presentation.text = "Remote Run"
+            e.presentation.description = "Remote Run on ${p.name} (${p.host})"
+        } else {
+            e.presentation.text = "Remote Run"
+            e.presentation.description = "Sync, build and run on active remote server"
+        }
+    }
+
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val tw = ToolWindowManager.getInstance(project).getToolWindow("RemoteFlow")
-        tw?.show {
-            val connMgr = RemoteConnectionManager.getInstance(project)
-            val syncMgr = FastSyncManager(project)
-            val settings = RemoteFlowSettings.getInstance(project)
-            val p = settings.activeProfile
+        val connMgr = RemoteConnectionManager.getInstance(project)
+        val syncMgr = FastSyncManager(project)
+        val settings = RemoteFlowSettings.getInstance(project)
+        val p = settings.activeProfileOrNull
+        if (p == null || p.host.isBlank()) {
+            connMgr.notifyUser("Remote Flow", "No active server profile configured!", NotificationType.WARNING)
+            return
+        }
 
-            if (!connMgr.isConnected) {
-                connMgr.notifyUser("Remote Flow", "Not connected to server! Please connect first.", NotificationType.WARNING)
-                return@show
-            }
+        val logService = uz.remote.flow.logging.RemoteFlowLogService.getInstance(project)
+        val logTw = ToolWindowManager.getInstance(project).getToolWindow("Remote Flow Log")
+        logTw?.show(null)
 
-            connMgr.notifyUser("Remote Flow", "Syncing code and executing on remote server...")
+        val doRun = {
+            val rawCmd = p.runCommand.ifBlank { "./gradlew bootRun" }
+            val javaPrefix = uz.remote.flow.ssh.resolveJavaEnvPrefix(p.javaHome)
+            val cmd = "${javaPrefix}export TERM=xterm-256color; export FORCE_COLOR=1; export SPRING_OUTPUT_ANSI_ENABLED=ALWAYS; sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
+
+            logService.log("[REMOTE RUN] 1. Syncing latest code to server ${p.name}...\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
             syncMgr.syncSingleServer(
                 profile = p,
-                onLog = {},
-                onComplete = {
-                    val rawCmd = p.runCommand
-                    val runCmd = "sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
+                onLog = { logService.log(it, uz.remote.flow.logging.LogCategory.SYNC, p.name) },
+                onComplete = { success ->
+                    if (!success) {
+                        logService.log("[REMOTE RUN WARNING] Sync warning occurred, proceeding with command...\n", uz.remote.flow.logging.LogCategory.RUN, p.name, true)
+                    }
+                    val javaInfo = if (p.javaHome.isNotBlank()) " (Java: ${p.javaHome})" else ""
+                    logService.log("[REMOTE RUN] 2. Executing remote command on server$javaInfo: $rawCmd\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
                     connMgr.executeRemoteCommand(
-                        cmd = runCmd,
+                        cmd = cmd,
                         workingDir = p.remoteProjectPath,
-                        onOutput = {},
+                        onOutput = { logService.log(it, uz.remote.flow.logging.LogCategory.RUN, p.name) },
                         onComplete = { code ->
-                            connMgr.notifyUser("Remote Flow", "Application execution finished (Exit code: $code)")
+                            logService.log("[REMOTE RUN FINISHED] Exit code: $code\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                            connMgr.notifyUser("Remote Flow: Execution Finished", "Application completed on server ${p.name} (Exit code: $code)", NotificationType.INFORMATION)
                         }
                     )
                 }
             )
+        }
+
+        if (!connMgr.isConnected) {
+            connMgr.notifyUser("Remote Flow", "Connecting to ${p.name} (${p.host})...", NotificationType.INFORMATION)
+            logService.log("[CONNECT] Connecting to ${p.name} (${p.host}:${p.port})...\n", uz.remote.flow.logging.LogCategory.SSH, p.name)
+            connMgr.connect(
+                profile = p,
+                onSuccess = { doRun() },
+                onError = { err ->
+                    logService.log("[ERROR] Connection failed: ${err.message}\n", uz.remote.flow.logging.LogCategory.SSH, p.name, true)
+                    connMgr.notifyUser("Remote Flow: Connection Failed", "Could not connect to ${p.name}: ${err.message}", NotificationType.ERROR)
+                }
+            )
+        } else {
+            doRun()
         }
     }
 }
 
-class RemoteFlowDebugAction : AnAction("Debug on Remote Server", "Run on remote server in JVM debug mode (port 5005)", RemoteFlowIcons.REMOTE_FLOW) {
+class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in JVM debug mode (port 5005)", RemoteFlowIcons.REMOTE_DEBUG) {
+
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+    override fun update(e: AnActionEvent) {
+        val project = e.project
+        if (project == null || project.isDisposed) {
+            e.presentation.isEnabledAndVisible = false
+            return
+        }
+        val settings = RemoteFlowSettings.getInstance(project)
+        val p = settings.activeProfileOrNull
+        e.presentation.isEnabledAndVisible = true
+        if (p != null) {
+            e.presentation.text = "Remote Debug"
+            e.presentation.description = "Remote Debug on ${p.name} (Port 5005)"
+        } else {
+            e.presentation.text = "Remote Debug"
+            e.presentation.description = "Run application on remote server in JVM debug mode"
+        }
+    }
+
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val tw = ToolWindowManager.getInstance(project).getToolWindow("RemoteFlow")
-        tw?.show {
-            val connMgr = RemoteConnectionManager.getInstance(project)
-            val syncMgr = FastSyncManager(project)
-            val settings = RemoteFlowSettings.getInstance(project)
-            val p = settings.activeProfile
+        val connMgr = RemoteConnectionManager.getInstance(project)
+        val syncMgr = FastSyncManager(project)
+        val settings = RemoteFlowSettings.getInstance(project)
+        val p = settings.activeProfileOrNull
+        if (p == null || p.host.isBlank()) {
+            connMgr.notifyUser("Remote Flow", "No active server profile configured!", NotificationType.WARNING)
+            return
+        }
 
-            if (!connMgr.isConnected) {
-                connMgr.notifyUser("Remote Flow", "Not connected to server! Please connect first.", NotificationType.WARNING)
-                return@show
-            }
+        val logService = uz.remote.flow.logging.RemoteFlowLogService.getInstance(project)
+        val logTw = ToolWindowManager.getInstance(project).getToolWindow("Remote Flow Log")
+        logTw?.show(null)
 
-            connMgr.notifyUser("Remote Flow", "Starting application in debug mode (Port: 5005)...")
+        val doDebug = {
+            val rawCmd = p.debugCommand.ifBlank { "./gradlew bootRun --debug-jvm" }
+            val javaPrefix = uz.remote.flow.ssh.resolveJavaEnvPrefix(p.javaHome)
+            val cmd = "${javaPrefix}export TERM=xterm-256color; export FORCE_COLOR=1; export SPRING_OUTPUT_ANSI_ENABLED=ALWAYS; sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
+
+            logService.log("[REMOTE DEBUG] 1. Syncing code to remote server ${p.name}...\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
             syncMgr.syncSingleServer(
                 profile = p,
-                onLog = {},
-                onComplete = {
-                    val rawCmd = p.debugCommand
-                    val debugCmd = "sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $rawCmd"
+                onLog = { logService.log(it, uz.remote.flow.logging.LogCategory.SYNC, p.name) },
+                onComplete = { _ ->
+                    val javaInfo = if (p.javaHome.isNotBlank()) " (Java: ${p.javaHome})" else ""
+                    logService.log("[REMOTE DEBUG] 2. Launching application in debug mode (port 5005) on server$javaInfo: $rawCmd\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
                     connMgr.executeRemoteCommand(
-                        cmd = debugCmd,
+                        cmd = cmd,
                         workingDir = p.remoteProjectPath,
-                        onOutput = {},
+                        onOutput = { logService.log(it, uz.remote.flow.logging.LogCategory.RUN, p.name) },
                         onComplete = { code ->
-                            connMgr.notifyUser("Remote Flow", "Debug session ended (Exit code: $code)")
+                            logService.log("[REMOTE DEBUG EXIT] Exit code: $code\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
                         }
                     )
-                    connMgr.notifyUser("Remote Flow: Debug Ready", "Server is listening on port 5005. Launch IntelliJ Remote JVM Debug!")
+                    logService.log("[DEBUGGER READY] Server is listening on port 5005. Launch IntelliJ 'Remote JVM Debug' configuration!\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                    connMgr.notifyUser("Remote Flow: Debug Ready", "Server is listening on port 5005. Connect via IntelliJ 'Remote JVM Debug'!", NotificationType.INFORMATION)
                 }
             )
         }
+
+        if (!connMgr.isConnected) {
+            connMgr.notifyUser("Remote Flow", "Connecting to ${p.name} (${p.host})...", NotificationType.INFORMATION)
+            logService.log("[CONNECT] Connecting to ${p.name} (${p.host}:${p.port})...\n", uz.remote.flow.logging.LogCategory.SSH, p.name)
+            connMgr.connect(
+                profile = p,
+                onSuccess = { doDebug() },
+                onError = { err ->
+                    logService.log("[ERROR] Connection failed: ${err.message}\n", uz.remote.flow.logging.LogCategory.SSH, p.name, true)
+                    connMgr.notifyUser("Remote Flow: Connection Failed", "Could not connect to ${p.name}: ${err.message}", NotificationType.ERROR)
+                }
+            )
+        } else {
+            doDebug()
+        }
+    }
+}
+
+class RemoteFlowStopAction : AnAction("Remote Stop", "Stop running application on remote server", RemoteFlowIcons.REMOTE_STOP) {
+
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+    override fun update(e: AnActionEvent) {
+        val project = e.project
+        if (project == null || project.isDisposed) {
+            e.presentation.isEnabledAndVisible = false
+            return
+        }
+        val settings = RemoteFlowSettings.getInstance(project)
+        val p = settings.activeProfileOrNull
+        e.presentation.isEnabledAndVisible = true
+        if (p != null) {
+            e.presentation.text = "Remote Stop"
+            e.presentation.description = "Stop application on ${p.name}"
+        } else {
+            e.presentation.text = "Remote Stop"
+            e.presentation.description = "Stop application on active remote server"
+        }
+    }
+
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        val connMgr = RemoteConnectionManager.getInstance(project)
+        val settings = RemoteFlowSettings.getInstance(project)
+        val p = settings.activeProfileOrNull
+        if (p == null || p.host.isBlank()) return
+
+        val logService = uz.remote.flow.logging.RemoteFlowLogService.getInstance(project)
+        val logTw = ToolWindowManager.getInstance(project).getToolWindow("Remote Flow Log")
+        logTw?.show(null)
+
+        if (!connMgr.isConnected) {
+            connMgr.notifyUser("Remote Flow", "Server is not connected.", NotificationType.WARNING)
+            return
+        }
+
+        logService.log("[STOPPING] Sending stop command to remote application on ${p.name}...\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+        val stopCmd = "pkill -f bootRun 2>/dev/null; pkill -f 'java.*jar' 2>/dev/null; echo 'App stopped.'"
+        connMgr.executeRemoteCommand(
+            cmd = stopCmd,
+            workingDir = p.remoteProjectPath,
+            onOutput = { logService.log(it, uz.remote.flow.logging.LogCategory.RUN, p.name) },
+            onComplete = {
+                logService.log("[STOPPED] Application stopped on ${p.name}.\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                connMgr.notifyUser("Remote Flow", "Application stopped on server: ${p.name}", NotificationType.INFORMATION)
+            }
+        )
     }
 }
 

@@ -222,12 +222,14 @@ class FastSyncManager(private val project: Project) {
     fun syncSpecificPath(
         profile: ServerProfile = connectionManager.config.activeProfile,
         relativePath: String,
+        isAutoSync: Boolean = false,
         onLog: (String) -> Unit,
         onComplete: (Boolean) -> Unit
     ) {
         val basePath = profile.localProjectPath.ifBlank { project.basePath ?: "" }
+        val prefix = if (isAutoSync) "AUTO-SYNC" else "SYNC SPECIFIC"
         if (basePath.isBlank()) {
-            onLog("[ERROR] Local directory topilmadi!\n")
+            onLog("[$prefix ERROR] Local directory topilmadi!\n")
             onComplete(false)
             return
         }
@@ -235,12 +237,13 @@ class FastSyncManager(private val project: Project) {
         val cleanRelative = relativePath.trimStart('/', '\\').replace('\\', '/')
         val localFile = java.io.File(basePath, cleanRelative)
         if (!localFile.exists()) {
-            onLog("[ERROR] Fayl yoki papka topilmadi: " + localFile.path + "\n")
+            onLog("[$prefix ERROR] Fayl yoki papka topilmadi: " + localFile.path + "\n")
             onComplete(false)
             return
         }
 
-        onLog("[SYNC SPECIFIC -> " + profile.name + "] Uploading " + cleanRelative + "...\n")
+        val startTime = System.currentTimeMillis()
+        onLog("[$prefix -> " + profile.name + "] Uploading " + cleanRelative + "...\n")
         parallelPool.submit {
             var tempAskPass: java.io.File? = null
             try {
@@ -285,6 +288,8 @@ class FastSyncManager(private val project: Project) {
                         if (cleanRelative.endsWith("gradlew") || cleanRelative.endsWith(".sh") || cleanRelative.endsWith("mvnw")) {
                             connectionManager.executeRemoteCommand("sed -i 's/\\r$//' \"$remoteTarget\" 2>/dev/null || true; chmod +x \"$remoteTarget\" 2>/dev/null || true", "", {}, {})
                         }
+                        val duration = System.currentTimeMillis() - startTime
+                        onLog("[$prefix SUCCESS] ✅ '$cleanRelative' serverga muvaffaqiyatli yuklandi (${duration}ms)\n")
                         onComplete(true)
                     } else {
                         onLog("[RSYNC NOTICE] Rsync returned error (code: $code). Uploading via SFTP...\n")
@@ -296,6 +301,12 @@ class FastSyncManager(private val project: Project) {
                             onComplete = { ok ->
                                 if (ok && (cleanRelative.endsWith("gradlew") || cleanRelative.endsWith(".sh") || cleanRelative.endsWith("mvnw"))) {
                                     connectionManager.executeRemoteCommand("sed -i 's/\\r$//' \"$remoteTarget\" 2>/dev/null || true; chmod +x \"$remoteTarget\" 2>/dev/null || true", "", {}, {})
+                                }
+                                val duration = System.currentTimeMillis() - startTime
+                                if (ok) {
+                                    onLog("[$prefix SUCCESS] ✅ '$cleanRelative' serverga muvaffaqiyatli yuklandi (${duration}ms)\n")
+                                } else {
+                                    onLog("[$prefix ERROR] ❌ '$cleanRelative' serverga yuklanmadi!\n")
                                 }
                                 onComplete(ok)
                             }
@@ -309,20 +320,21 @@ class FastSyncManager(private val project: Project) {
                         remotePath = remoteTarget,
                         onProgress = onLog,
                         onComplete = { success ->
+                            if (success && (cleanRelative.endsWith("gradlew") || cleanRelative.endsWith(".sh") || cleanRelative.endsWith("mvnw"))) {
+                                connectionManager.executeRemoteCommand("sed -i 's/\\r$//' \"$remoteTarget\" 2>/dev/null || true; chmod +x \"$remoteTarget\" 2>/dev/null || true", "", {}, {})
+                            }
+                            val duration = System.currentTimeMillis() - startTime
                             if (success) {
-                                if (cleanRelative.endsWith("gradlew") || cleanRelative.endsWith(".sh") || cleanRelative.endsWith("mvnw")) {
-                                    connectionManager.executeRemoteCommand("sed -i 's/\\r$//' \"$remoteTarget\" 2>/dev/null || true; chmod +x \"$remoteTarget\" 2>/dev/null || true", "", {}, {})
-                                }
-                                onLog("[SYNC SUCCESS] File updated on server: " + cleanRelative + "\n")
+                                onLog("[$prefix SUCCESS] ✅ '$cleanRelative' serverga muvaffaqiyatli yuklandi (${duration}ms)\n")
                             } else {
-                                onLog("[SYNC ERROR] Failed to transfer file!\n")
+                                onLog("[$prefix ERROR] ❌ '$cleanRelative' serverga yuklanmadi!\n")
                             }
                             onComplete(success)
                         }
                     )
                 }
             } catch (e: Exception) {
-                onLog("[SYNC ERROR]: " + e.message + "\n")
+                onLog("[$prefix ERROR] ❌ " + (e.message ?: e.toString()) + "\n")
                 onComplete(false)
             } finally {
                 try { tempAskPass?.delete() } catch (_: Exception) {}

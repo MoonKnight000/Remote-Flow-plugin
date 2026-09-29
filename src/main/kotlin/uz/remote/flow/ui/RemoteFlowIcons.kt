@@ -18,4 +18,13 @@ object RemoteFlowIcons {
 
     @JvmField
     val TERMINAL: Icon = IconLoader.getIcon("/icons/terminal.svg", RemoteFlowIcons::class.java)
+
+    @JvmField
+    val REMOTE_RUN: Icon = IconLoader.getIcon("/icons/remoteRun.svg", RemoteFlowIcons::class.java)
+
+    @JvmField
+    val REMOTE_DEBUG: Icon = IconLoader.getIcon("/icons/remoteDebug.svg", RemoteFlowIcons::class.java)
+
+    @JvmField
+    val REMOTE_STOP: Icon = IconLoader.getIcon("/icons/remoteStop.svg", RemoteFlowIcons::class.java)
 }

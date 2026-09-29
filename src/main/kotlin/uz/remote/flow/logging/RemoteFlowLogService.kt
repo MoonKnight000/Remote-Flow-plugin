@@ -150,7 +150,7 @@ class RemoteFlowLogService(private val project: Project) {
                 rawMsg.contains("[ERROR]") || rawMsg.contains(" ERROR ") || rawMsg.contains("FATAL") || rawMsg.contains("Exception") || rawMsg.contains("FAILED") -> ConsoleViewContentType.ERROR_OUTPUT
                 rawMsg.contains("[WARNING]") || rawMsg.contains("[WARN]") || rawMsg.contains(" WARN ") -> ConsoleViewContentType.LOG_WARNING_OUTPUT
                 rawMsg.contains("[SUCCESS]") || rawMsg.contains("[SYNC SUCCESS]") || rawMsg.contains("BUILD SUCCESSFUL") || rawMsg.contains("Started ") -> ConsoleViewContentType.USER_INPUT
-                rawMsg.contains("[REMOTE RUN]") || rawMsg.contains("[REMOTE DEBUG]") || rawMsg.contains("[PORT") || rawMsg.contains("[GIT") -> ConsoleViewContentType.LOG_INFO_OUTPUT
+                rawMsg.contains("[REMOTE RUN]") || rawMsg.contains("[REMOTE DEBUG]") || rawMsg.contains("[PORT") || rawMsg.contains("[GIT") || rawMsg.contains("[AUTO-SYNC") || rawMsg.contains("[SYNC") -> ConsoleViewContentType.LOG_INFO_OUTPUT
                 else -> ConsoleViewContentType.NORMAL_OUTPUT
             }
             consoleView.print(rawMsg, contentType)
