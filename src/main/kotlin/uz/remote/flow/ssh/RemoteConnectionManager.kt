@@ -47,6 +47,16 @@ class RemoteConnectionManager(private val project: Project) {
         private set
     @Volatile private var activeSession: net.schmizz.sshj.connection.channel.direct.Session? = null
     @Volatile private var activeCommand: net.schmizz.sshj.connection.channel.direct.Session.Command? = null
+    @Volatile var activeProcessHandler: uz.remote.flow.execution.RemoteFlowProcessHandler? = null
+
+    fun sendProcessInput(data: ByteArray) {
+        try {
+            activeCommand?.outputStream?.let { os ->
+                os.write(data)
+                os.flush()
+            }
+        } catch (_: Exception) {}
+    }
 
     fun getActiveSshClient(): SSHClient? = if (isConnected) sshClient else null
 
@@ -478,6 +488,8 @@ class RemoteConnectionManager(private val project: Project) {
                     try {
                         project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).processStateChanged(false, null)
                     } catch (_: Exception) {}
+                    activeProcessHandler?.finishProcess(0)
+                    activeProcessHandler = null
                 }
             }
         }
@@ -525,6 +537,8 @@ class RemoteConnectionManager(private val project: Project) {
             try {
                 project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).processStateChanged(false, null)
             } catch (_: Exception) {}
+            activeProcessHandler?.finishProcess(130)
+            activeProcessHandler = null
             onComplete()
         }
     }
@@ -608,6 +622,8 @@ class RemoteConnectionManager(private val project: Project) {
             try {
                 project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).processStateChanged(false, null)
             } catch (_: Exception) {}
+            activeProcessHandler?.finishProcess(-1)
+            activeProcessHandler = null
         }
 
         project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).connectionStateChanged(false, config.activeProfile)

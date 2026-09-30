@@ -49,8 +49,19 @@ class RemoteFlowRunConfiguration(
         return RemoteFlowSettingsEditor(project)
     }
 
-    override fun getState(executor: Executor, environment: ExecutionEnvironment): RunProfileState? {
-        return RunProfileState { _, _ -> null }
+    override fun getState(executor: Executor, environment: ExecutionEnvironment): RunProfileState {
+        return RunProfileState { exec, _ ->
+            val console = com.intellij.execution.filters.TextConsoleBuilderFactory.getInstance().createBuilder(project).console
+            val p = uz.remote.flow.settings.RemoteFlowSettings.getInstance(project).activeProfile
+            val rawCmd = if (exec.id == com.intellij.execution.executors.DefaultDebugExecutor.EXECUTOR_ID) {
+                debugCommand.ifBlank { p.debugCommand.ifBlank { "./gradlew bootRun --debug-jvm" } }
+            } else {
+                runCommand.ifBlank { p.runCommand.ifBlank { "./gradlew bootRun" } }
+            }
+            val handler = uz.remote.flow.execution.RemoteFlowProcessHandler(project, p, rawCmd)
+            console.attachToProcess(handler)
+            com.intellij.execution.DefaultExecutionResult(console, handler)
+        }
     }
 
     override fun getIcon(): Icon = RemoteFlowIcons.REMOTE_RUN

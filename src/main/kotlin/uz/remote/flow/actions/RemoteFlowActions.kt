@@ -185,9 +185,30 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
 
     companion object {
         fun runDirectly(project: Project, runConfig: uz.remote.flow.run.RemoteFlowRunConfiguration? = null) {
+            val settings = RemoteFlowSettings.getInstance(project)
+            val runManager = com.intellij.execution.RunManager.getInstance(project)
+            val type = uz.remote.flow.run.RemoteFlowConfigurationType.getInstance()
+            var configSettings = runConfig?.let { rc ->
+                runManager.allSettings.find { it.configuration == rc }
+            } ?: runManager.selectedConfiguration?.takeIf {
+                it.configuration is uz.remote.flow.run.RemoteFlowRunConfiguration || settings.routeStandardRunToRemote
+            } ?: runManager.getConfigurationSettingsList(type).firstOrNull()
+
+            if (configSettings == null) {
+                uz.remote.flow.run.RemoteFlowStartupActivity.ensureDefaultRunConfiguration(project)
+                configSettings = runManager.getConfigurationSettingsList(type).firstOrNull()
+            }
+
+            if (configSettings != null) {
+                com.intellij.execution.ProgramRunnerUtil.executeConfiguration(
+                    configSettings,
+                    com.intellij.execution.executors.DefaultRunExecutor.getRunExecutorInstance()
+                )
+                return
+            }
+
             val connMgr = RemoteConnectionManager.getInstance(project)
             val syncMgr = FastSyncManager(project)
-            val settings = RemoteFlowSettings.getInstance(project)
             val p = if (runConfig != null && runConfig.serverProfileName.isNotBlank() && runConfig.serverProfileName != "[Active Server Profile]") {
                 settings.profiles.find { it.name.equals(runConfig.serverProfileName, ignoreCase = true) } ?: settings.activeProfileOrNull
             } else {
@@ -366,9 +387,30 @@ class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in 
 
     companion object {
         fun runDebugDirectly(project: Project, runConfig: uz.remote.flow.run.RemoteFlowRunConfiguration? = null) {
+            val settings = RemoteFlowSettings.getInstance(project)
+            val runManager = com.intellij.execution.RunManager.getInstance(project)
+            val type = uz.remote.flow.run.RemoteFlowConfigurationType.getInstance()
+            var configSettings = runConfig?.let { rc ->
+                runManager.allSettings.find { it.configuration == rc }
+            } ?: runManager.selectedConfiguration?.takeIf {
+                it.configuration is uz.remote.flow.run.RemoteFlowRunConfiguration || settings.routeStandardRunToRemote
+            } ?: runManager.getConfigurationSettingsList(type).firstOrNull()
+
+            if (configSettings == null) {
+                uz.remote.flow.run.RemoteFlowStartupActivity.ensureDefaultRunConfiguration(project)
+                configSettings = runManager.getConfigurationSettingsList(type).firstOrNull()
+            }
+
+            if (configSettings != null) {
+                com.intellij.execution.ProgramRunnerUtil.executeConfiguration(
+                    configSettings,
+                    com.intellij.execution.executors.DefaultDebugExecutor.getDebugExecutorInstance()
+                )
+                return
+            }
+
             val connMgr = RemoteConnectionManager.getInstance(project)
             val syncMgr = FastSyncManager(project)
-            val settings = RemoteFlowSettings.getInstance(project)
             val p = if (runConfig != null && runConfig.serverProfileName.isNotBlank() && runConfig.serverProfileName != "[Active Server Profile]") {
                 settings.profiles.find { it.name.equals(runConfig.serverProfileName, ignoreCase = true) } ?: settings.activeProfileOrNull
             } else {
