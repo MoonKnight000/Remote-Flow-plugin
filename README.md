@@ -22,9 +22,9 @@ Traditional remote development solutions (such as JetBrains Gateway or headless 
 
 ## 🚀 Key Features
 
-### 1. Seamless New UI Run Toolbar Integration
-- **Direct Run Widget Placement**: Remote Flow's **Remote Run** (emerald cloud play), **Remote Debug** (amber cloud bug), and **Remote Stop** buttons sit directly beside your Run Configuration selector (e.g., next to `HomeSaleV2Application`) in the main header toolbar.
-- **Smart Run Delegation (`RemoteFlowProgramRunner`)**: Optionally delegate the standard IntelliJ Run (`Shift + F10`) and Debug (`Shift + F9`) buttons to automatically execute on the active remote server with automatic port forwarding.
+### 1. Native Run Configuration Integration
+- **Run Configuration Dropdown**: Select the native **Remote Flow** configuration directly in IntelliJ's main header toolbar and run or debug using standard IDE buttons (`Shift + F10` / `Shift + F9`).
+- **Smart Run Delegation (`RemoteFlowProgramRunner`)**: Seamlessly routes standard IntelliJ Run and Debug actions to the active remote server with automatic port forwarding.
 - **Interactive Ready Detection**: Automatically parses stdout to detect when Spring Boot / Tomcat / Netty is ready, printing clickable local URLs (e.g. `http://localhost:8080`).
 
 ### 2. High-Speed Differential Code Synchronization
@@ -105,8 +105,8 @@ Traditional remote development solutions (such as JetBrains Gateway or headless 
 
 ### Step 3: Run & Debug Remotely
 1. Select your active server from the **Remote Flow** tool window or status bar widget.
-2. Click **Connect** (or simply click **Remote Run** — it will connect automatically).
-3. Click the **Remote Run** button (green play with cloud) next to your Run Configuration dropdown (e.g. `HomeSaleV2Application`).
+2. Select **Remote Flow** from the Run Configuration dropdown in the top toolbar.
+3. Click the standard IntelliJ **Run** (green triangle / `Shift + F10`) or **Debug** (green bug / `Shift + F9`) button.
 4. Watch real-time build and execution logs in the **Remote Flow Log** panel.
 5. Once your application starts, open `http://localhost:8080` in your local browser!
 

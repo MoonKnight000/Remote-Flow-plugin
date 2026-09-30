@@ -12,7 +12,7 @@
 
     <h3>🚀 Core Features</h3>
     <ul>
-        <li><b>New UI Run Toolbar Integration:</b> <b>Remote Run</b>, <b>Remote Debug</b>, and <b>Remote Stop</b> buttons sit right beside your Run Configuration selector (e.g. next to <code>HomeSaleV2Application</code>) in the main toolbar.</li>
+        <li><b>Native Run Configuration Support:</b> Full integration with IntelliJ Run/Debug Configurations (<code>Remote Flow</code>) to run and debug applications directly on the remote server using standard IDE buttons.</li>
         <li><b>Smart Run Delegation:</b> Optionally delegate standard IntelliJ Run (<code>Shift + F10</code>) and Debug (<code>Shift + F9</code>) actions to automatically execute on the active remote server with automatic port forwarding.</li>
         <li><b>Differential Code Synchronization:</b> Fast Rsync and SSH SFTP sync engines with intelligent ignore patterns (<code>.git</code>, <code>.gradle</code>, <code>build</code>, <code>target</code>, <code>out</code>, <code>.idea</code>, <code>node_modules</code>). Supports Auto-Sync on Save (<code>Ctrl + S</code>) and targeted right-click sync for individual files or directories.</li>
         <li><b>One-Click Remote JVM Debugging:</b> Automatically forwards JVM debug port <code>5005</code> and attaches IntelliJ's native debugger as soon as the remote application starts.</li>
@@ -37,7 +37,7 @@
     <change-notes><![CDATA[
     <h3>Version 1.0.0</h3>
     <ul>
-        <li><b>Toolbar Integration:</b> Integrated Remote Run, Remote Debug, and Remote Stop buttons into New UI Run Toolbar Widget directly beside the run configuration selector.</li>
+        <li><b>Run Configuration Integration:</b> Added native Remote Flow Run Configuration for seamless execution via standard IDE controls.</li>
         <li><b>Standard Run Delegation:</b> Added <code>RemoteFlowProgramRunner</code> to route standard IDE Run/Debug actions (<code>Shift + F10</code> / <code>Shift + F9</code>) directly to the active remote server.</li>
         <li><b>Bi-Directional Port Forwarding:</b> Added support for Local &rarr; Host and Host &rarr; Local SSH tunnels.</li>
         <li><b>Active Listening Port Scanner:</b> Added automatic remote port scanner with service detection (Postgres, MySQL, Redis, RabbitMQ, Spring Boot, etc.).</li>
@@ -143,15 +143,6 @@
                     class="uz.remote.flow.actions.RemoteFlowOpenSettingsAction"
                     text="Remote Flow Settings..."
                     description="Configure servers, ports and sync settings"/>
-        </group>
-
-        <!-- Main Top Toolbar Run Group (New UI & Classic UI) -->
-        <group id="RemoteFlow.TopToolbarGroup" text="Remote Flow Run" description="Remote Flow execution controls" popup="false">
-            <add-to-group group-id="RunToolbarMainActionGroup" anchor="after" relative-to-action="RedesignedRunConfigurationSelector"/>
-            <add-to-group group-id="ToolbarRunGroup" anchor="after" relative-to-action="RunConfiguration"/>
-            <reference ref="RemoteFlow.RunAction"/>
-            <reference ref="RemoteFlow.DebugAction"/>
-            <reference ref="RemoteFlow.StopAction"/>
         </group>
 
         <!-- Context menu in Project View -->
