@@ -62,6 +62,8 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
     private val btnAutoDetectJava = JButton("Detect Remote Java", AllIcons.Actions.Search)
     private val chkAutoSyncOnSave = JBCheckBox("⚡ Auto-Sync on Save (automatically upload files to server on Ctrl+S)", false)
     private val chkRouteStandardRun = JBCheckBox("🔄 Route standard IDE Run/Debug (HomeSaleV2Application) to active remote server", true)
+    private val chkOpenBrowser = JBCheckBox("🌐 Auto-open browser when application is ready", false)
+    private val browserUrlField = JBTextField()
 
     private val autoReconnectCheck = JBCheckBox("Auto-Reconnect & Keep-Alive", true)
     private val btnTestConnection = JButton("Test Connection", AllIcons.Actions.Execute)
@@ -484,11 +486,20 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         gbc.gridx = 0; gbc.gridy = 13; gbc.gridwidth = 4; gbc.weightx = 1.0
         form.add(chkRouteStandardRun, gbc)
 
-        // Row 14: Buttons
+        // Row 14: Browser Auto-Open
+        gbc.gridx = 0; gbc.gridy = 14; gbc.weightx = 0.0; form.add(chkOpenBrowser, gbc)
+        val browserPanel = JPanel(BorderLayout(4, 0))
+        browserUrlField.emptyText.text = "http://localhost:8080"
+        browserPanel.add(JBLabel("URL: "), BorderLayout.WEST)
+        browserPanel.add(browserUrlField, BorderLayout.CENTER)
+        gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(browserPanel, gbc)
+        gbc.gridwidth = 1
+
+        // Row 15: Buttons
         val btnRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
         btnRow.add(btnTestConnection)
         btnRow.add(autoReconnectCheck)
-        gbc.gridx = 0; gbc.gridy = 14; gbc.gridwidth = 4; gbc.weightx = 1.0
+        gbc.gridx = 0; gbc.gridy = 15; gbc.gridwidth = 4; gbc.weightx = 1.0
         form.add(btnRow, gbc)
 
         // Ports Table
@@ -606,6 +617,8 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         runCommandField.text = p.runCommand
         debugCommandField.text = p.debugCommand
         chkAutoSyncOnSave.isSelected = p.autoSyncOnSave
+        chkOpenBrowser.isSelected = p.openBrowserOnReady
+        browserUrlField.text = p.browserUrl.ifBlank { "http://localhost:8080" }
         autoReconnectCheck.isSelected = settings.autoReconnect
 
         // Ports table
@@ -635,6 +648,8 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         p.runCommand = runCommandField.text.trim()
         p.debugCommand = debugCommandField.text.trim()
         p.autoSyncOnSave = chkAutoSyncOnSave.isSelected
+        p.openBrowserOnReady = chkOpenBrowser.isSelected
+        p.browserUrl = browserUrlField.text.trim().ifBlank { "http://localhost:8080" }
 
         if (::portsTableModel.isInitialized) {
             val updated = mutableListOf<PortMapping>()
@@ -685,6 +700,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
                 a.debugCommand != b.debugCommand || a.authType != b.authType ||
                 a.excludePatterns != b.excludePatterns || a.rsyncPath != b.rsyncPath ||
                 a.javaHome != b.javaHome || a.autoSyncOnSave != b.autoSyncOnSave ||
+                a.openBrowserOnReady != b.openBrowserOnReady || a.browserUrl != b.browserUrl ||
                 a.forwardedPorts.size != b.forwardedPorts.size
             ) {
                 return true

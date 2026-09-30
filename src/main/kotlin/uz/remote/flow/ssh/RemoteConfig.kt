@@ -53,7 +53,7 @@ data class ServerProfile(
     var autoSyncOnSave: Boolean = false,
     var environment: ServerEnvironment = ServerEnvironment.DEV,
     var confirmOnProduction: Boolean = true,
-    var openBrowserOnReady: Boolean = true,
+    var openBrowserOnReady: Boolean = false,
     var browserUrl: String = "http://localhost:8080",
     var preRunCommand: String = "",
     var postRunCommand: String = "",

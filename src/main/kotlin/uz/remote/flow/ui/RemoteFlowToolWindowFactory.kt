@@ -528,6 +528,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         nameLabel.preferredSize = Dimension(90, 24)
         nameLabel.font = nameLabel.font.deriveFont(Font.BOLD)
 
+        bar.setUI(ModernProgressBarUI())
         bar.isStringPainted = true
         bar.value = 0
         bar.preferredSize = Dimension(250, 22)
@@ -1304,6 +1305,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
                 cLabel.font = cLabel.font.deriveFont(Font.PLAIN, 10f)
 
                 val bar = JProgressBar(0, 100)
+                bar.setUI(ModernProgressBarUI())
                 bar.preferredSize = Dimension(80, 14)
                 bar.isStringPainted = true
 
