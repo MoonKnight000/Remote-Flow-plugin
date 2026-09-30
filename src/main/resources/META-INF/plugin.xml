@@ -74,6 +74,10 @@
                     factoryClass="uz.remote.flow.ui.RemoteFlowLogToolWindowFactory"/>
 
         <programRunner implementation="uz.remote.flow.execution.RemoteFlowProgramRunner" order="first"/>
+
+        <configurationType implementation="uz.remote.flow.run.RemoteFlowConfigurationType"/>
+
+        <postStartupActivity implementation="uz.remote.flow.run.RemoteFlowStartupActivity"/>
     </extensions>
 
     <projectListeners>

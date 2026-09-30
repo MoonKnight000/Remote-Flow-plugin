@@ -170,11 +170,15 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
     }
 
     companion object {
-        fun runDirectly(project: Project) {
+        fun runDirectly(project: Project, runConfig: uz.remote.flow.run.RemoteFlowRunConfiguration? = null) {
             val connMgr = RemoteConnectionManager.getInstance(project)
             val syncMgr = FastSyncManager(project)
             val settings = RemoteFlowSettings.getInstance(project)
-            val p = settings.activeProfileOrNull
+            val p = if (runConfig != null && runConfig.serverProfileName.isNotBlank() && runConfig.serverProfileName != "[Active Server Profile]") {
+                settings.profiles.find { it.name.equals(runConfig.serverProfileName, ignoreCase = true) } ?: settings.activeProfileOrNull
+            } else {
+                settings.activeProfileOrNull
+            }
             if (p == null || p.host.isBlank()) {
                 connMgr.notifyUser("Remote Flow", "No active server profile configured!", NotificationType.WARNING)
                 return
@@ -183,43 +187,66 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
             val logService = uz.remote.flow.logging.RemoteFlowLogService.getInstance(project)
             logService.showLogWindow()
 
+            val workingDir = if (runConfig != null && runConfig.remoteWorkingDir.isNotBlank()) {
+                runConfig.remoteWorkingDir.trim()
+            } else {
+                p.remoteProjectPath
+            }
+            val shouldSync = runConfig?.autoSync ?: true
+            val shouldForward = runConfig?.forwardPorts ?: true
+
             val doRun = {
                 // 1. Ensure configured port forwards are active
-                connMgr.startPortForwarding(p)
+                if (shouldForward) {
+                    connMgr.startPortForwarding(p)
+                }
 
-                val rawCmd = p.runCommand.ifBlank { "./gradlew bootRun" }
+                val rawCmd = if (runConfig != null && runConfig.runCommand.isNotBlank()) {
+                    runConfig.runCommand.trim()
+                } else {
+                    p.runCommand.ifBlank { "./gradlew bootRun" }
+                }
                 val cmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(rawCmd, p.javaHome)
 
-                logService.log("[REMOTE RUN] 1. Syncing latest code to server ${p.name}...\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
-                syncMgr.syncSingleServer(
-                    profile = p,
-                    onLog = { logService.log(it, uz.remote.flow.logging.LogCategory.SYNC, p.name) },
-                    onComplete = { success ->
-                        if (!success) {
-                            logService.log("[REMOTE RUN WARNING] Sync warning occurred, proceeding with command...\n", uz.remote.flow.logging.LogCategory.RUN, p.name, true)
-                        }
-                        val javaInfo = if (p.javaHome.isNotBlank()) " (Java: ${p.javaHome})" else ""
-                        logService.log("[REMOTE RUN] 2. Executing remote command on server$javaInfo: $rawCmd\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
-                        val readyNotified = java.util.concurrent.atomic.AtomicBoolean(false)
-                        connMgr.executeRemoteCommand(
-                            cmd = cmd,
-                            workingDir = p.remoteProjectPath,
-                            isLongRunning = true,
-                            onOutput = { line ->
-                                logService.log(line, uz.remote.flow.logging.LogCategory.RUN, p.name)
-                                if (!readyNotified.get() && (line.contains("Tomcat started on port(s):") || line.contains("Netty started on port") || (line.contains("Started ") && line.contains(" in ") && line.contains("seconds")))) {
-                                    readyNotified.set(true)
-                                    val httpPort = p.forwardedPorts.firstOrNull { fp -> fp.direction == uz.remote.flow.ssh.ForwardDirection.LOCAL_TO_REMOTE }?.localPort ?: 8080
-                                    logService.log("[APP READY] 🚀 Application is ready! Accessible locally at: http://localhost:$httpPort\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
-                                }
-                            },
-                            onComplete = { code ->
-                                logService.log("[REMOTE RUN FINISHED] Exit code: $code\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
-                                connMgr.notifyUser("Remote Flow: Execution Finished", "Application completed on server ${p.name} (Exit code: $code)", NotificationType.INFORMATION)
+                val executeCmd = {
+                    val javaInfo = if (p.javaHome.isNotBlank()) " (Java: ${p.javaHome})" else ""
+                    logService.log("[REMOTE RUN] Executing remote command on server$javaInfo: $rawCmd\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                    val readyNotified = java.util.concurrent.atomic.AtomicBoolean(false)
+                    connMgr.executeRemoteCommand(
+                        cmd = cmd,
+                        workingDir = workingDir,
+                        isLongRunning = true,
+                        onOutput = { line ->
+                            logService.log(line, uz.remote.flow.logging.LogCategory.RUN, p.name)
+                            if (!readyNotified.get() && (line.contains("Tomcat started on port(s):") || line.contains("Netty started on port") || (line.contains("Started ") && line.contains(" in ") && line.contains("seconds")))) {
+                                readyNotified.set(true)
+                                val httpPort = p.forwardedPorts.firstOrNull { fp -> fp.direction == uz.remote.flow.ssh.ForwardDirection.LOCAL_TO_REMOTE }?.localPort ?: 8080
+                                logService.log("[APP READY] 🚀 Application is ready! Accessible locally at: http://localhost:$httpPort\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
                             }
-                        )
-                    }
-                )
+                        },
+                        onComplete = { code ->
+                            logService.log("[REMOTE RUN FINISHED] Exit code: $code\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                            connMgr.notifyUser("Remote Flow: Execution Finished", "Application completed on server ${p.name} (Exit code: $code)", NotificationType.INFORMATION)
+                        }
+                    )
+                }
+
+                if (shouldSync) {
+                    logService.log("[REMOTE RUN] 1. Syncing latest code to server ${p.name}...\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                    syncMgr.syncSingleServer(
+                        profile = p,
+                        onLog = { logService.log(it, uz.remote.flow.logging.LogCategory.SYNC, p.name) },
+                        onComplete = { success ->
+                            if (!success) {
+                                logService.log("[REMOTE RUN WARNING] Sync warning occurred, proceeding with command...\n", uz.remote.flow.logging.LogCategory.RUN, p.name, true)
+                            }
+                            executeCmd()
+                        }
+                    )
+                } else {
+                    logService.log("[REMOTE RUN] Skipping code sync (disabled in configuration)...\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                    executeCmd()
+                }
             }
 
             val startOrRestart = {
@@ -284,11 +311,15 @@ class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in 
     }
 
     companion object {
-        fun runDebugDirectly(project: Project) {
+        fun runDebugDirectly(project: Project, runConfig: uz.remote.flow.run.RemoteFlowRunConfiguration? = null) {
             val connMgr = RemoteConnectionManager.getInstance(project)
             val syncMgr = FastSyncManager(project)
             val settings = RemoteFlowSettings.getInstance(project)
-            val p = settings.activeProfileOrNull
+            val p = if (runConfig != null && runConfig.serverProfileName.isNotBlank() && runConfig.serverProfileName != "[Active Server Profile]") {
+                settings.profiles.find { it.name.equals(runConfig.serverProfileName, ignoreCase = true) } ?: settings.activeProfileOrNull
+            } else {
+                settings.activeProfileOrNull
+            }
             if (p == null || p.host.isBlank()) {
                 connMgr.notifyUser("Remote Flow", "No active server profile configured!", NotificationType.WARNING)
                 return
@@ -297,48 +328,71 @@ class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in 
             val logService = uz.remote.flow.logging.RemoteFlowLogService.getInstance(project)
             logService.showLogWindow()
 
+            val workingDir = if (runConfig != null && runConfig.remoteWorkingDir.isNotBlank()) {
+                runConfig.remoteWorkingDir.trim()
+            } else {
+                p.remoteProjectPath
+            }
+            val shouldSync = runConfig?.autoSync ?: true
+            val shouldForward = runConfig?.forwardPorts ?: true
+
             val doDebug = {
                 // 1. Ensure port 5005 and user ports are forwarded
                 connMgr.startSingleForward(uz.remote.flow.ssh.PortMapping(5005, 5005, "JVM Debug", direction = uz.remote.flow.ssh.ForwardDirection.LOCAL_TO_REMOTE))
-                connMgr.startPortForwarding(p)
+                if (shouldForward) {
+                    connMgr.startPortForwarding(p)
+                }
 
-                val rawCmd = p.debugCommand.ifBlank { "./gradlew bootRun --debug-jvm" }
+                val rawCmd = if (runConfig != null && runConfig.debugCommand.isNotBlank()) {
+                    runConfig.debugCommand.trim()
+                } else {
+                    p.debugCommand.ifBlank { "./gradlew bootRun --debug-jvm" }
+                }
                 val cmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(rawCmd, p.javaHome)
 
-                logService.log("[REMOTE DEBUG] 1. Syncing code to remote server ${p.name}...\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
-                syncMgr.syncSingleServer(
-                    profile = p,
-                    onLog = { logService.log(it, uz.remote.flow.logging.LogCategory.SYNC, p.name) },
-                    onComplete = { _ ->
-                        val javaInfo = if (p.javaHome.isNotBlank()) " (Java: ${p.javaHome})" else ""
-                        logService.log("[REMOTE DEBUG] 2. Launching application in debug mode (port 5005) on server$javaInfo: $rawCmd\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                val executeCmd = {
+                    val javaInfo = if (p.javaHome.isNotBlank()) " (Java: ${p.javaHome})" else ""
+                    logService.log("[REMOTE DEBUG] Launching application in debug mode (port 5005) on server$javaInfo: $rawCmd\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
 
-                        val debuggerAttached = java.util.concurrent.atomic.AtomicBoolean(false)
-                        connMgr.executeRemoteCommand(
-                            cmd = cmd,
-                            workingDir = p.remoteProjectPath,
-                            isLongRunning = true,
-                            onOutput = { line ->
-                                logService.log(line, uz.remote.flow.logging.LogCategory.RUN, p.name)
-                                if (!debuggerAttached.get() && (line.contains("Listening for transport dt_socket at address:") || line.contains("dt_socket") || line.contains("5005"))) {
-                                    if (debuggerAttached.compareAndSet(false, true)) {
-                                        uz.remote.flow.debug.RemoteDebugHelper.attachRemoteDebugger(project, "localhost", 5005, p.name)
-                                    }
+                    val debuggerAttached = java.util.concurrent.atomic.AtomicBoolean(false)
+                    connMgr.executeRemoteCommand(
+                        cmd = cmd,
+                        workingDir = workingDir,
+                        isLongRunning = true,
+                        onOutput = { line ->
+                            logService.log(line, uz.remote.flow.logging.LogCategory.RUN, p.name)
+                            if (!debuggerAttached.get() && (line.contains("Listening for transport dt_socket at address:") || line.contains("dt_socket") || line.contains("5005"))) {
+                                if (debuggerAttached.compareAndSet(false, true)) {
+                                    uz.remote.flow.debug.RemoteDebugHelper.attachRemoteDebugger(project, "localhost", 5005, p.name)
                                 }
-                            },
-                            onComplete = { code ->
-                                logService.log("[REMOTE DEBUG EXIT] Exit code: $code\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
                             }
-                        )
+                        },
+                        onComplete = { code ->
+                            logService.log("[REMOTE DEBUG EXIT] Exit code: $code\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                        }
+                    )
 
-                        // Scheduled fallback: attach debugger if socket is listening after 3.5 seconds
-                        com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService().schedule({
-                            if (connMgr.isProcessRunning && debuggerAttached.compareAndSet(false, true)) {
-                                uz.remote.flow.debug.RemoteDebugHelper.attachRemoteDebugger(project, "localhost", 5005, p.name)
-                            }
-                        }, 3500, java.util.concurrent.TimeUnit.MILLISECONDS)
-                    }
-                )
+                    // Scheduled fallback: attach debugger if socket is listening after 3.5 seconds
+                    com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService().schedule({
+                        if (connMgr.isProcessRunning && debuggerAttached.compareAndSet(false, true)) {
+                            uz.remote.flow.debug.RemoteDebugHelper.attachRemoteDebugger(project, "localhost", 5005, p.name)
+                        }
+                    }, 3500, java.util.concurrent.TimeUnit.MILLISECONDS)
+                }
+
+                if (shouldSync) {
+                    logService.log("[REMOTE DEBUG] 1. Syncing code to remote server ${p.name}...\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                    syncMgr.syncSingleServer(
+                        profile = p,
+                        onLog = { logService.log(it, uz.remote.flow.logging.LogCategory.SYNC, p.name) },
+                        onComplete = { _ ->
+                            executeCmd()
+                        }
+                    )
+                } else {
+                    logService.log("[REMOTE DEBUG] Skipping code sync (disabled in configuration)...\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                    executeCmd()
+                }
             }
 
             val startOrRestart = {

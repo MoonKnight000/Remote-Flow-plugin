@@ -10,12 +10,12 @@ import com.intellij.execution.runners.ProgramRunner
 import com.intellij.openapi.application.ApplicationManager
 import uz.remote.flow.actions.RemoteFlowDebugAction
 import uz.remote.flow.actions.RemoteFlowRunAction
+import uz.remote.flow.run.RemoteFlowRunConfiguration
 import uz.remote.flow.settings.RemoteFlowSettings
 
 /**
- * Intercepts standard IntelliJ Run and Debug requests (e.g. clicking the Run/Debug button
- * next to HomeSaleV2Application or pressing Shift+F10 / Shift+F9) when routeStandardRunToRemote is enabled.
- * Executes the build and run on the remote server with automatic port forwarding.
+ * Handles Remote Flow run configurations and intercepts standard IntelliJ Run/Debug requests
+ * when routeStandardRunToRemote is enabled.
  */
 class RemoteFlowProgramRunner : ProgramRunner<RunnerSettings> {
 
@@ -24,6 +24,10 @@ class RemoteFlowProgramRunner : ProgramRunner<RunnerSettings> {
     override fun canRun(executorId: String, profile: RunProfile): Boolean {
         if (executorId != DefaultRunExecutor.EXECUTOR_ID && executorId != DefaultDebugExecutor.EXECUTOR_ID) {
             return false
+        }
+        // Always support RemoteFlowRunConfiguration
+        if (profile is RemoteFlowRunConfiguration) {
+            return true
         }
         val project = (profile as? RunConfiguration)?.project ?: return false
         val settings = RemoteFlowSettings.getInstance(project)
@@ -35,12 +39,13 @@ class RemoteFlowProgramRunner : ProgramRunner<RunnerSettings> {
     override fun execute(environment: ExecutionEnvironment) {
         val project = environment.project
         val isDebug = environment.executor.id == DefaultDebugExecutor.EXECUTOR_ID
+        val runConfig = environment.runProfile as? RemoteFlowRunConfiguration
 
         ApplicationManager.getApplication().invokeLater {
             if (isDebug) {
-                RemoteFlowDebugAction.runDebugDirectly(project)
+                RemoteFlowDebugAction.runDebugDirectly(project, runConfig)
             } else {
-                RemoteFlowRunAction.runDirectly(project)
+                RemoteFlowRunAction.runDirectly(project, runConfig)
             }
         }
     }
