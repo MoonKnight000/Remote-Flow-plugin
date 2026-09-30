@@ -69,6 +69,7 @@ class RemoteFlowStatusBarWidget(private val project: Project) : CustomStatusBarW
             override fun profileChanged(profile: ServerProfile) {
                 ApplicationManager.getApplication().invokeLater {
                     updateStatus()
+                    manageStatsPoller(RemoteConnectionManager.getInstance(project).isConnected)
                 }
             }
 
@@ -103,14 +104,23 @@ class RemoteFlowStatusBarWidget(private val project: Project) : CustomStatusBarW
         statsPollerTask?.cancel(true)
         statsPollerTask = null
 
-        if (start) {
+        val settings = RemoteFlowSettings.getInstance(project)
+        val active = settings.activeProfileOrNull
+        val isMonitoringEnabled = active != null && active.monitorMode != "OFF"
+
+        if (start && isMonitoringEnabled) {
             fetchStatsNow()
-            statsPollerTask = AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay({
-                val connMgr = RemoteConnectionManager.getInstance(project)
-                if (connMgr.isConnected) {
-                    fetchStatsNow()
-                }
-            }, 25, 25, TimeUnit.SECONDS)
+            val isLive = active?.monitorMode != "MANUAL"
+            if (isLive) {
+                val interval = if (active?.monitorMode == "REALTIME_5S") 15L else 10L
+                statsPollerTask = AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay({
+                    val connMgr = RemoteConnectionManager.getInstance(project)
+                    val curActive = RemoteFlowSettings.getInstance(project).activeProfileOrNull
+                    if (connMgr.isConnected && curActive?.monitorMode != "OFF" && curActive?.monitorMode != "MANUAL") {
+                        fetchStatsNow()
+                    }
+                }, interval, interval, TimeUnit.SECONDS)
+            }
         } else {
             latestMetrics = null
             updateStatus()
@@ -119,11 +129,22 @@ class RemoteFlowStatusBarWidget(private val project: Project) : CustomStatusBarW
 
     private fun fetchStatsNow() {
         val connMgr = RemoteConnectionManager.getInstance(project)
-        if (!connMgr.isConnected) return
+        val settings = RemoteFlowSettings.getInstance(project)
+        val active = settings.activeProfileOrNull
+        if (!connMgr.isConnected || active == null || active.monitorMode == "OFF") {
+            latestMetrics = null
+            ApplicationManager.getApplication().invokeLater { updateStatus() }
+            return
+        }
 
         statsManager.fetchMetrics(
             onParsed = { metrics ->
-                latestMetrics = metrics
+                val curActive = RemoteFlowSettings.getInstance(project).activeProfileOrNull
+                if (curActive?.monitorMode != "OFF") {
+                    latestMetrics = metrics
+                } else {
+                    latestMetrics = null
+                }
                 ApplicationManager.getApplication().invokeLater {
                     updateStatus()
                 }
@@ -147,24 +168,31 @@ class RemoteFlowStatusBarWidget(private val project: Project) : CustomStatusBarW
             return
         }
 
+        val isMonitoringEnabled = active.monitorMode != "OFF"
+        if (!isMonitoringEnabled) {
+            latestMetrics = null
+        }
+
         if (connMgr.isConnected) {
             iconLabel.icon = RemoteFlowIcons.CLOUD_CONNECTED
-            val m = latestMetrics
+            val m = if (isMonitoringEnabled) latestMetrics else null
             val statsInfo = if (m != null && m.ramPercent > 0) {
                 " | CPU: ${m.cpuPercent}% | RAM: ${m.ramPercent}%"
             } else ""
+
+            val metricsTip = if (m != null) "CPU: ${m.cpuText} | RAM: ${m.ramText} (${m.ramPercent}%) | Disk: ${m.diskText}\n" else ""
 
             if (connMgr.isProcessRunning) {
                 textLabel.text = "${active.name} [Running]$statsInfo"
                 textLabel.foreground = JBColor(Color(13, 148, 136), Color(52, 211, 153)) // Vivid Emerald Green
                 panel.toolTipText = "Remote Flow: Application is running on ${active.name}\n" +
-                        (if (m != null) "CPU: ${m.cpuText} | RAM: ${m.ramText} (${m.ramPercent}%) | Disk: ${m.diskText}\n" else "") +
+                        metricsTip +
                         "Click for quick actions (Stop, Terminal, Logs)."
             } else {
                 textLabel.text = "${active.name} [Connected]$statsInfo"
                 textLabel.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
                 panel.toolTipText = "Remote Flow: Connected to ${active.name} (${active.host}:${active.port})\n" +
-                        (if (m != null) "CPU: ${m.cpuText} | RAM: ${m.ramText} (${m.ramPercent}%) | Disk: ${m.diskText}\n" else "") +
+                        metricsTip +
                         "Click for quick actions (Run, Debug, Sync)."
             }
         } else {
@@ -221,9 +249,19 @@ class RemoteFlowStatusBarWidget(private val project: Project) : CustomStatusBarW
                     })
                 }
 
-                latestMetrics?.let { m ->
-                    group.add(Separator.create("Server Health: CPU ${m.cpuPercent}% | RAM ${m.ramPercent}% | Disk ${m.diskPercent}%"))
+                val isMonitoring = active.monitorMode != "OFF"
+                if (isMonitoring) {
+                    latestMetrics?.let { m ->
+                        group.add(Separator.create("Server Health: CPU ${m.cpuPercent}% | RAM ${m.ramPercent}% | Disk ${m.diskPercent}%"))
+                    }
                 }
+
+                group.add(object : AnAction(if (isMonitoring) "🚫 Turn Resource Monitoring OFF" else "⚡ Turn Resource Monitoring ON") {
+                    override fun actionPerformed(e: AnActionEvent) {
+                        active.monitorMode = if (isMonitoring) "OFF" else "REALTIME_3S"
+                        project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).profileChanged(active)
+                    }
+                })
 
                 group.add(object : AnAction("📊 Remote Task Manager (CPU/RAM/Processes)...") {
                     override fun actionPerformed(e: AnActionEvent) {

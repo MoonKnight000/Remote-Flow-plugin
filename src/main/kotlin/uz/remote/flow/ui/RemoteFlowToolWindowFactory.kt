@@ -169,6 +169,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
             }
             if (p != null) {
                 p.monitorMode = modeStr
+                project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).profileChanged(p)
             }
             restartMonitorScheduler()
         }
