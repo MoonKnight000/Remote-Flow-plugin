@@ -13,6 +13,7 @@ import uz.remote.flow.settings.RemoteFlowConfigurable
 import uz.remote.flow.settings.RemoteFlowSettings
 import uz.remote.flow.ssh.RemoteConnectionManager
 import uz.remote.flow.sync.FastSyncManager
+import com.intellij.icons.AllIcons
 import uz.remote.flow.ui.RemoteFlowIcons
 
 class RemoteFlowConnectAction : AnAction("Connect / Disconnect Server", "Connect or disconnect active remote server", RemoteFlowIcons.REMOTE_FLOW) {
@@ -153,19 +154,27 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
         }
         val settings = RemoteFlowSettings.getInstance(project)
         val p = settings.activeProfileOrNull
+        val connMgr = RemoteConnectionManager.getInstance(project)
+        val isRunning = connMgr.isProcessRunning
         e.presentation.isEnabledAndVisible = true
         val selConfig = try {
             com.intellij.execution.RunManager.getInstance(project).selectedConfiguration?.name
         } catch (_: Throwable) { null }
         val configStr = if (selConfig.isNullOrBlank()) "" else " ['$selConfig']"
 
-        if (p != null) {
-            val httpPort = p.forwardedPorts.firstOrNull { fp -> fp.direction == uz.remote.flow.ssh.ForwardDirection.LOCAL_TO_REMOTE }?.localPort ?: 8080
-            e.presentation.text = "Remote Run"
-            e.presentation.description = "Remote Run$configStr on ${p.name} (Port $httpPort forwarded to localhost)"
+        if (isRunning) {
+            e.presentation.text = "Rerun"
+            e.presentation.icon = AllIcons.Actions.Restart
+            e.presentation.description = "Rerun application$configStr on ${p?.name ?: "remote server"} (restart and sync)"
         } else {
             e.presentation.text = "Remote Run"
-            e.presentation.description = "Sync, build and run on active remote server"
+            e.presentation.icon = RemoteFlowIcons.REMOTE_RUN
+            if (p != null) {
+                val httpPort = p.forwardedPorts.firstOrNull { fp -> fp.direction == uz.remote.flow.ssh.ForwardDirection.LOCAL_TO_REMOTE }?.localPort ?: 8080
+                e.presentation.description = "Remote Run$configStr on ${p.name} (Port $httpPort forwarded to localhost)"
+            } else {
+                e.presentation.description = "Sync, build and run on active remote server"
+            }
         }
     }
 
@@ -529,13 +538,13 @@ class RemoteFlowStopAction : AnAction("Remote Stop", "Stop running application o
         val settings = RemoteFlowSettings.getInstance(project)
         val p = settings.activeProfileOrNull
 
-        e.presentation.isVisible = true
-        // Only enabled when connected AND process is actually running!
-        e.presentation.isEnabled = connMgr.isConnected && connMgr.isProcessRunning
+        val isRunning = connMgr.isConnected && connMgr.isProcessRunning
+        e.presentation.isVisible = isRunning
+        e.presentation.isEnabled = isRunning
 
         if (p != null) {
-            e.presentation.text = if (connMgr.isProcessRunning) "Stop ${p.name} App" else "Remote Stop"
-            e.presentation.description = if (connMgr.isProcessRunning) "Stop application running on ${p.name}" else "No application is currently running"
+            e.presentation.text = if (isRunning) "Stop ${p.name} App" else "Remote Stop"
+            e.presentation.description = if (isRunning) "Stop application running on ${p.name}" else "No application is currently running"
         } else {
             e.presentation.text = "Remote Stop"
             e.presentation.description = "Stop application on active remote server"

@@ -88,6 +88,13 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     // Run / Debug tab controls
     private val runCommandField = JBTextField()
     private val debugCommandField = JBTextField()
+    private val btnRun = JButton("Remote Run (Sync & Build & Run)", AllIcons.Actions.Execute)
+    private val btnStop = JButton("Stop App", AllIcons.Actions.Suspend)
+    private val btnHotReloadInTab = JButton("⚡ Hot Reload", AllIcons.Actions.Compile)
+    private val lblRunStatus = JLabel("● Running")
+    private val btnDebug = JButton("Remote Debug (Start in Debug Mode)", AllIcons.Actions.StartDebugger)
+    private val btnStopDebug = JButton("Stop Debug", AllIcons.Actions.Suspend)
+    private val lblDebugStatus = JLabel("● Running (Debug)")
 
     // Terminal tab controls
     private val terminalInputField = JBTextField()
@@ -146,6 +153,9 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
                 ApplicationManager.getApplication().invokeLater {
                     updateConnectionStateUi(connected)
                     updateOverviewSummary(settings.activeProfile)
+                    if (!connected) {
+                        updateProcessStateUi(false)
+                    }
                 }
             }
 
@@ -153,6 +163,13 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
                 ApplicationManager.getApplication().invokeLater {
                     refreshProfileComboBox()
                     loadProfileData(settings.activeProfile)
+                    updateProcessStateUi(connectionManager.isProcessRunning)
+                }
+            }
+
+            override fun processStateChanged(running: Boolean, command: String?) {
+                ApplicationManager.getApplication().invokeLater {
+                    updateProcessStateUi(running)
                 }
             }
         })
@@ -177,6 +194,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         refreshProfileComboBox()
         loadProfileData(settings.activeProfile)
         updateConnectionStateUi(connectionManager.isConnected)
+        updateProcessStateUi(connectionManager.isProcessRunning)
     }
 
     override fun dispose() {
@@ -542,23 +560,33 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         gbc.gridx = 1; gbc.weightx = 1.0; runCard.add(runCommandField, gbc)
 
         val runBtnRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2))
-        val btnRun = JButton("Remote Run (Sync & Build & Run)", AllIcons.Actions.Execute)
         btnRun.font = btnRun.font.deriveFont(Font.BOLD)
-        btnRun.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
+        btnRun.foreground = JBColor(Color(16, 185, 129), Color(52, 211, 153))
+        btnRun.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        btnRun.toolTipText = "Sync latest code, build and run application on remote server (Alt+Shift+R)"
         btnRun.addActionListener { executeRemoteRun() }
         runBtnRow.add(btnRun)
 
-        val btnStop = JButton("Stop App", AllIcons.Actions.Suspend)
-        btnStop.foreground = JBColor.RED
+        btnStop.font = btnStop.font.deriveFont(Font.BOLD)
+        btnStop.foreground = JBColor(Color(239, 68, 68), Color(248, 113, 113))
+        btnStop.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        btnStop.toolTipText = "Stop running application on remote server (Alt+Shift+S)"
+        btnStop.isVisible = connectionManager.isProcessRunning
         btnStop.addActionListener { executeRemoteStop() }
         runBtnRow.add(btnStop)
 
-        val btnHotReloadInTab = JButton("⚡ Hot Reload", AllIcons.Actions.Compile)
+        btnHotReloadInTab.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         btnHotReloadInTab.toolTipText = "Recompile and reload current class on remote server without restart (Alt+Shift+H)"
         btnHotReloadInTab.addActionListener {
             uz.remote.flow.reload.RemoteHotReloadManager.hotReloadCurrentFile(project)
         }
         runBtnRow.add(btnHotReloadInTab)
+
+        lblRunStatus.font = lblRunStatus.font.deriveFont(Font.BOLD, 12f)
+        lblRunStatus.foreground = JBColor(Color(16, 185, 129), Color(52, 211, 153))
+        lblRunStatus.border = JBUI.Borders.emptyLeft(6)
+        lblRunStatus.isVisible = connectionManager.isProcessRunning
+        runBtnRow.add(lblRunStatus)
 
         gbc.gridx = 0; gbc.gridy = 1; gbc.gridwidth = 2; gbc.weightx = 1.0
         runCard.add(runBtnRow, gbc)
@@ -572,11 +600,26 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         gbc.gridx = 1; gbc.weightx = 1.0; debugCard.add(debugCommandField, gbc)
 
         val debugBtnRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2))
-        val btnDebug = JButton("Remote Debug (Start in Debug Mode)", AllIcons.Actions.StartDebugger)
         btnDebug.font = btnDebug.font.deriveFont(Font.BOLD)
-        btnDebug.foreground = JBColor(Color(245, 158, 11), Color(245, 158, 11))
+        btnDebug.foreground = JBColor(Color(245, 158, 11), Color(251, 191, 36))
+        btnDebug.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        btnDebug.toolTipText = "Launch application on remote server in JVM debug mode (port 5005 forwarded) (Alt+Shift+D)"
         btnDebug.addActionListener { executeRemoteDebug() }
         debugBtnRow.add(btnDebug)
+
+        btnStopDebug.font = btnStopDebug.font.deriveFont(Font.BOLD)
+        btnStopDebug.foreground = JBColor(Color(239, 68, 68), Color(248, 113, 113))
+        btnStopDebug.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        btnStopDebug.toolTipText = "Stop active debug session on remote server (Alt+Shift+S)"
+        btnStopDebug.isVisible = connectionManager.isProcessRunning
+        btnStopDebug.addActionListener { executeRemoteStop() }
+        debugBtnRow.add(btnStopDebug)
+
+        lblDebugStatus.font = lblDebugStatus.font.deriveFont(Font.BOLD, 12f)
+        lblDebugStatus.foreground = JBColor(Color(245, 158, 11), Color(251, 191, 36))
+        lblDebugStatus.border = JBUI.Borders.emptyLeft(6)
+        lblDebugStatus.isVisible = connectionManager.isProcessRunning
+        debugBtnRow.add(lblDebugStatus)
 
         gbc.gridx = 0; gbc.gridy = 1; gbc.gridwidth = 2; gbc.weightx = 1.0
         debugCard.add(debugBtnRow, gbc)
@@ -886,15 +929,43 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
     private fun executeRemoteRun() {
         logService.showLogWindow()
-        if (!connectionManager.isConnected) {
-            log("[WARNING] Not connected to server! Please click 'Connect' first.\n", true)
+        val p = settings.activeProfile
+        if (p.host.isBlank()) {
+            connectionManager.notifyUser("Remote Flow", "No active server profile configured!", NotificationType.WARNING)
             return
         }
 
-        val p = settings.activeProfile
+        if (!connectionManager.isConnected) {
+            log("[CONNECT] Connecting to ${p.name} (${p.host}:${p.port})...\n")
+            btnRun.isEnabled = false
+            btnRun.text = "Connecting..."
+            connectionManager.connect(
+                profile = p,
+                onSuccess = {
+                    ApplicationManager.getApplication().invokeLater {
+                        btnRun.isEnabled = true
+                        executeRemoteRun()
+                    }
+                },
+                onError = { err ->
+                    ApplicationManager.getApplication().invokeLater {
+                        btnRun.isEnabled = true
+                        updateProcessStateUi(false)
+                        log("[ERROR] Auto-connection failed: ${err.message}\n", true)
+                        connectionManager.notifyUser("Remote Flow: Connection Failed", "Could not connect to ${p.name}: ${err.message}", NotificationType.ERROR)
+                    }
+                }
+            )
+            return
+        }
+
         if (!uz.remote.flow.ssh.RemoteSafetyHelper.checkProductionSafe(project, p, "Remote Run")) {
             return
         }
+
+        val wasRunning = connectionManager.isProcessRunning
+        btnRun.isEnabled = false
+        btnRun.text = if (wasRunning) "Restarting..." else "Starting..."
 
         p.runCommand = runCommandField.text.trim()
         val rawCmd = p.runCommand
@@ -937,13 +1008,16 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
                             log("[REMOTE RUN FINISHED] Exit code: $code\n")
                             connectionManager.notifyUser("Remote Flow: Execution Finished", "Application completed on server (Exit code: $code)", NotificationType.INFORMATION)
                             pingApiHealth()
+                            ApplicationManager.getApplication().invokeLater {
+                                updateProcessStateUi(connectionManager.isProcessRunning)
+                            }
                         }
                     )
                 }
             )
         }
 
-        if (connectionManager.isProcessRunning) {
+        if (wasRunning) {
             log("[REMOTE RUN] Restarting: stopping existing process first...\n")
             connectionManager.stopRemoteProcess(p, onOutput = { log(it) }) {
                 doRun()
@@ -955,15 +1029,43 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
     private fun executeRemoteDebug() {
         logService.showLogWindow()
-        if (!connectionManager.isConnected) {
-            log("[WARNING] Not connected to server! Please click 'Connect' first.\n", true)
+        val p = settings.activeProfile
+        if (p.host.isBlank()) {
+            connectionManager.notifyUser("Remote Flow", "No active server profile configured!", NotificationType.WARNING)
             return
         }
 
-        val p = settings.activeProfile
+        if (!connectionManager.isConnected) {
+            log("[CONNECT] Connecting to ${p.name} (${p.host}:${p.port})...\n")
+            btnDebug.isEnabled = false
+            btnDebug.text = "Connecting..."
+            connectionManager.connect(
+                profile = p,
+                onSuccess = {
+                    ApplicationManager.getApplication().invokeLater {
+                        btnDebug.isEnabled = true
+                        executeRemoteDebug()
+                    }
+                },
+                onError = { err ->
+                    ApplicationManager.getApplication().invokeLater {
+                        btnDebug.isEnabled = true
+                        updateProcessStateUi(false)
+                        log("[ERROR] Auto-connection failed: ${err.message}\n", true)
+                        connectionManager.notifyUser("Remote Flow: Connection Failed", "Could not connect to ${p.name}: ${err.message}", NotificationType.ERROR)
+                    }
+                }
+            )
+            return
+        }
+
         if (!uz.remote.flow.ssh.RemoteSafetyHelper.checkProductionSafe(project, p, "Remote Debug")) {
             return
         }
+
+        val wasRunning = connectionManager.isProcessRunning
+        btnDebug.isEnabled = false
+        btnDebug.text = if (wasRunning) "Restarting..." else "Starting Debug..."
 
         p.debugCommand = debugCommandField.text.trim()
         val rawCmd = p.debugCommand
@@ -994,7 +1096,12 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
                                 }
                             }
                         },
-                        onComplete = { code -> log("[REMOTE DEBUG EXIT] Exit code: $code\n") }
+                        onComplete = { code ->
+                            log("[REMOTE DEBUG EXIT] Exit code: $code\n")
+                            ApplicationManager.getApplication().invokeLater {
+                                updateProcessStateUi(connectionManager.isProcessRunning)
+                            }
+                        }
                     )
 
                     com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService().schedule({
@@ -1006,7 +1113,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
             )
         }
 
-        if (connectionManager.isProcessRunning) {
+        if (wasRunning) {
             log("[REMOTE DEBUG] Restarting: stopping existing debug session first...\n")
             connectionManager.stopRemoteProcess(p, onOutput = { log(it) }) {
                 doDebug()
@@ -1024,14 +1131,89 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
         logService.showLogWindow()
         log("[STOPPING] Stopping remote application...\n")
+        btnStop.isEnabled = false
+        btnStop.text = "Stopping..."
+        btnStopDebug.isEnabled = false
+        btnStopDebug.text = "Stopping..."
         connectionManager.stopRemoteProcess(
             profile = p,
             onOutput = { log(it) },
             onComplete = {
-                log("[STOPPED] Application stopped.\n")
+                log("[STOPPED] Application stopped on ${p.name}.\n")
                 connectionManager.notifyUser("Remote Flow", "Application stopped on server", NotificationType.INFORMATION)
+                ApplicationManager.getApplication().invokeLater {
+                    btnStop.isEnabled = true
+                    btnStop.text = "Stop App"
+                    btnStopDebug.isEnabled = true
+                    btnStopDebug.text = "Stop Debug"
+                    updateProcessStateUi(false)
+                }
             }
         )
+    }
+
+    private fun updateProcessStateUi(running: Boolean) {
+        val cmd = connectionManager.runningCommand ?: ""
+        val isDebug = cmd.contains("debug", ignoreCase = true) || cmd.contains("5005") || cmd.contains("dt_socket")
+
+        if (running) {
+            btnRun.text = "Rerun (Sync & Build & Run)"
+            btnRun.icon = AllIcons.Actions.Restart
+            btnRun.toolTipText = "Restart application: stops current process, syncs latest code and runs again (Alt+Shift+R)"
+            btnRun.isEnabled = true
+
+            btnStop.isVisible = true
+            btnStop.isEnabled = true
+            btnStop.text = "Stop App"
+            btnStop.icon = AllIcons.Actions.Suspend
+            btnStop.toolTipText = "Stop running application on remote server (Alt+Shift+S)"
+
+            lblRunStatus.text = if (isDebug) "● Running (Debug)" else "● Running"
+            lblRunStatus.isVisible = true
+
+            btnDebug.text = "Rerun Debug (Port 5005)"
+            btnDebug.icon = AllIcons.Actions.Restart
+            btnDebug.toolTipText = "Restart application in debug mode on remote server (Alt+Shift+D)"
+            btnDebug.isEnabled = true
+
+            btnStopDebug.isVisible = true
+            btnStopDebug.isEnabled = true
+            btnStopDebug.text = "Stop Debug"
+            btnStopDebug.icon = AllIcons.Actions.Suspend
+            btnStopDebug.toolTipText = "Stop active debug session on remote server (Alt+Shift+S)"
+
+            lblDebugStatus.text = if (isDebug) "● Running (Debug)" else "● Running"
+            lblDebugStatus.isVisible = true
+        } else {
+            btnRun.text = "Remote Run (Sync & Build & Run)"
+            btnRun.icon = AllIcons.Actions.Execute
+            btnRun.toolTipText = "Sync latest code, build and run application on remote server (Alt+Shift+R)"
+            btnRun.isEnabled = true
+
+            btnStop.isVisible = false
+            btnStop.isEnabled = true
+            btnStop.text = "Stop App"
+            btnStop.icon = AllIcons.Actions.Suspend
+
+            lblRunStatus.isVisible = false
+
+            btnDebug.text = "Remote Debug (Start in Debug Mode)"
+            btnDebug.icon = AllIcons.Actions.StartDebugger
+            btnDebug.toolTipText = "Launch application on remote server in JVM debug mode (port 5005 forwarded) (Alt+Shift+D)"
+            btnDebug.isEnabled = true
+
+            btnStopDebug.isVisible = false
+            btnStopDebug.isEnabled = true
+            btnStopDebug.text = "Stop Debug"
+            btnStopDebug.icon = AllIcons.Actions.Suspend
+
+            lblDebugStatus.isVisible = false
+        }
+
+        btnRun.parent?.revalidate()
+        btnRun.parent?.repaint()
+        btnDebug.parent?.revalidate()
+        btnDebug.parent?.repaint()
     }
 
     private fun updatePortsTableData() {

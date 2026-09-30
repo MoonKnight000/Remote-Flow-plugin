@@ -599,6 +599,17 @@ class RemoteConnectionManager(private val project: Project) {
         } catch (_: Exception) {}
         sshClient = null
 
+        if (isProcessRunning) {
+            isProcessRunning = false
+            runningCommand = null
+            activeSession = null
+            activeCommand = null
+            com.intellij.ide.ActivityTracker.getInstance().inc()
+            try {
+                project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).processStateChanged(false, null)
+            } catch (_: Exception) {}
+        }
+
         project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).connectionStateChanged(false, config.activeProfile)
     }
 

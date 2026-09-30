@@ -237,6 +237,11 @@ class RemoteFlowStatusBarWidget(private val project: Project) : CustomStatusBarW
 
             if (connMgr.isConnected) {
                 if (connMgr.isProcessRunning) {
+                    group.add(object : AnAction("🔄 Rerun App (${active.name})", "Restart running application (stop, sync and run again)", com.intellij.icons.AllIcons.Actions.Restart) {
+                        override fun actionPerformed(e: AnActionEvent) {
+                            ActionManager.getInstance().getAction("RemoteFlow.RunAction")?.actionPerformed(e)
+                        }
+                    })
                     group.add(object : AnAction("🛑 Stop Running App (${active.name})", "Terminate current remote application", RemoteFlowIcons.REMOTE_STOP) {
                         override fun actionPerformed(e: AnActionEvent) {
                             connMgr.stopRemoteProcess(active)
