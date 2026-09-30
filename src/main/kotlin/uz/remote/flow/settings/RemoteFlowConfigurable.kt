@@ -17,6 +17,8 @@ import com.intellij.util.ui.JBUI
 import uz.remote.flow.ssh.*
 import uz.remote.flow.ui.RemoteDirectoryChooserDialog
 import java.awt.*
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import javax.swing.*
 import javax.swing.table.DefaultTableModel
 
@@ -527,12 +529,43 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         }
         portToolbar.add(btnAddPort)
 
+        val btnRemovePort = JButton("Remove Port", AllIcons.General.Remove)
+        btnRemovePort.toolTipText = "Delete selected port forwarding (Delete)"
+        btnRemovePort.addActionListener {
+            val r = portsTable.selectedRow
+            if (r in 0 until portsTableModel.rowCount) {
+                val modelRow = portsTable.convertRowIndexToModel(r)
+                portsTableModel.removeRow(modelRow)
+            } else {
+                Messages.showInfoMessage(project, "Please select a port row to delete.", "No Port Selected")
+            }
+        }
+        portToolbar.add(btnRemovePort)
+
+        portsTable.addMouseListener(object : MouseAdapter() {
+            override fun mousePressed(e: MouseEvent) {
+                checkPopup(e)
+            }
+            override fun mouseReleased(e: MouseEvent) {
+                checkPopup(e)
+            }
+            private fun checkPopup(e: MouseEvent) {
+                if (e.isPopupTrigger || SwingUtilities.isRightMouseButton(e)) {
+                    val r = portsTable.rowAtPoint(e.point)
+                    if (r in 0 until portsTable.rowCount) {
+                        portsTable.setRowSelectionInterval(r, r)
+                    }
+                }
+            }
+        })
+
         portsTable.addKeyListener(object : java.awt.event.KeyAdapter() {
             override fun keyPressed(e: java.awt.event.KeyEvent) {
                 if (e.keyCode == java.awt.event.KeyEvent.VK_DELETE || e.keyCode == java.awt.event.KeyEvent.VK_BACK_SPACE) {
                     val r = portsTable.selectedRow
                     if (r in 0 until portsTableModel.rowCount) {
-                        portsTableModel.removeRow(r)
+                        val modelRow = portsTable.convertRowIndexToModel(r)
+                        portsTableModel.removeRow(modelRow)
                     }
                 }
             }
@@ -543,7 +576,14 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         itemAdd.addActionListener {
             portsTableModel.addRow(arrayOf("Local -> Host", "8080", "8080", "Custom Service"))
         }
-        portPopup.add(itemAdd)
+        val itemRemove = JMenuItem("Remove Port (Delete)", AllIcons.General.Remove)
+        itemRemove.addActionListener {
+            val currentSel = portsTable.selectedRow
+            if (currentSel in 0 until portsTableModel.rowCount) {
+                val modelRow = portsTable.convertRowIndexToModel(currentSel)
+                portsTableModel.removeRow(modelRow)
+            }
+        }
 
         portPopup.addPopupMenuListener(object : javax.swing.event.PopupMenuListener {
             override fun popupMenuWillBecomeVisible(e: javax.swing.event.PopupMenuEvent?) {
@@ -552,13 +592,6 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
                 val r = portsTable.selectedRow
                 if (r in 0 until portsTableModel.rowCount) {
                     portPopup.addSeparator()
-                    val itemRemove = JMenuItem("Remove Port (Delete)", AllIcons.General.Remove)
-                    itemRemove.addActionListener {
-                        val currentSel = portsTable.selectedRow
-                        if (currentSel in 0 until portsTableModel.rowCount) {
-                            portsTableModel.removeRow(currentSel)
-                        }
-                    }
                     portPopup.add(itemRemove)
                 }
             }

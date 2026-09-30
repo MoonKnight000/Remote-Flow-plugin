@@ -694,6 +694,11 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         btnAddPort.addActionListener { showAddPortDialog() }
         portHeaderRight.add(btnAddPort)
 
+        val btnRemovePort = JButton("Remove Port", AllIcons.General.Remove)
+        btnRemovePort.toolTipText = "Delete selected port forwarding from list (Delete)"
+        btnRemovePort.addActionListener { removeSelectedPort() }
+        portHeaderRight.add(btnRemovePort)
+
         val btnRestartTunnels = JButton("Restart All Tunnels", AllIcons.Actions.Restart)
         btnRestartTunnels.toolTipText = "Restart all active port forwarding tunnels"
         btnRestartTunnels.addActionListener { restartTunnels() }
@@ -753,13 +758,31 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
             }
         }
 
-        // Double click to open web or copy
+        // Mouse listener for double-click open and right-click row selection
         portsTable.addMouseListener(object : MouseAdapter() {
+            override fun mousePressed(e: MouseEvent) {
+                checkPopup(e)
+            }
+
+            override fun mouseReleased(e: MouseEvent) {
+                checkPopup(e)
+            }
+
+            private fun checkPopup(e: MouseEvent) {
+                if (e.isPopupTrigger || SwingUtilities.isRightMouseButton(e)) {
+                    val r = portsTable.rowAtPoint(e.point)
+                    if (r in 0 until portsTable.rowCount) {
+                        portsTable.setRowSelectionInterval(r, r)
+                    }
+                }
+            }
+
             override fun mouseClicked(e: MouseEvent) {
                 if (e.clickCount == 2) {
                     val row = portsTable.selectedRow
                     if (row >= 0 && row < portsTableModel.rowCount) {
-                        val localAddr = portsTableModel.getValueAt(row, 3) as? String ?: ""
+                        val modelRow = portsTable.convertRowIndexToModel(row)
+                        val localAddr = portsTableModel.getValueAt(modelRow, 3) as? String ?: ""
                         val port = localAddr.substringAfter("localhost:").toIntOrNull()
                         if (port != null) {
                             try {
@@ -780,10 +803,23 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val itemOpenBrowser = JMenuItem("Open in Browser (localhost:port)", AllIcons.General.Web)
         itemOpenBrowser.addActionListener {
             val r = portsTable.selectedRow
+            if (r < 0) return@addActionListener
+            val modelRow = portsTable.convertRowIndexToModel(r)
             val profile = settings.activeProfileOrNull ?: return@addActionListener
-            if (r in profile.forwardedPorts.indices) {
-                val p = profile.forwardedPorts[r]
-                val port = if (p.direction == ForwardDirection.LOCAL_TO_REMOTE) p.localPort else p.remotePort
+            val isConn = connectionManager.isConnected
+            val dynamicAppPort = connectionManager.activeAppPort
+            val hasDynamicRow = dynamicAppPort != null && isConn
+
+            val port = if (hasDynamicRow && modelRow == 0) {
+                dynamicAppPort
+            } else {
+                val idx = if (hasDynamicRow) modelRow - 1 else modelRow
+                if (idx in profile.forwardedPorts.indices) {
+                    val p = profile.forwardedPorts[idx]
+                    if (p.direction == ForwardDirection.LOCAL_TO_REMOTE) p.localPort else p.remotePort
+                } else null
+            }
+            if (port != null) {
                 try {
                     Desktop.getDesktop().browse(URI("http://localhost:$port"))
                 } catch (_: Exception) {}
@@ -792,22 +828,49 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val itemCopyLocal = JMenuItem("Copy Local Address", AllIcons.Actions.Copy)
         itemCopyLocal.addActionListener {
             val r = portsTable.selectedRow
+            if (r < 0) return@addActionListener
+            val modelRow = portsTable.convertRowIndexToModel(r)
             val profile = settings.activeProfileOrNull ?: return@addActionListener
-            if (r in profile.forwardedPorts.indices) {
-                val p = profile.forwardedPorts[r]
-                val sel = StringSelection("localhost:${p.localPort}")
+            val isConn = connectionManager.isConnected
+            val dynamicAppPort = connectionManager.activeAppPort
+            val hasDynamicRow = dynamicAppPort != null && isConn
+
+            val port = if (hasDynamicRow && modelRow == 0) {
+                dynamicAppPort
+            } else {
+                val idx = if (hasDynamicRow) modelRow - 1 else modelRow
+                if (idx in profile.forwardedPorts.indices) {
+                    profile.forwardedPorts[idx].localPort
+                } else null
+            }
+            if (port != null) {
+                val sel = StringSelection("localhost:$port")
                 Toolkit.getDefaultToolkit().systemClipboard.setContents(sel, sel)
+                connectionManager.notifyUser("Remote Flow", "Address copied to clipboard: localhost:$port")
             }
         }
         val itemRestartTunnel = JMenuItem("Restart This Tunnel", AllIcons.Actions.Restart)
         itemRestartTunnel.addActionListener {
             val r = portsTable.selectedRow
+            if (r < 0) return@addActionListener
+            val modelRow = portsTable.convertRowIndexToModel(r)
             val profile = settings.activeProfileOrNull ?: return@addActionListener
-            if (r in profile.forwardedPorts.indices) {
-                val p = profile.forwardedPorts[r]
-                connectionManager.stopSingleForward(p)
-                connectionManager.startSingleForward(p)
+            val isConn = connectionManager.isConnected
+            val dynamicAppPort = connectionManager.activeAppPort
+            val hasDynamicRow = dynamicAppPort != null && isConn
+
+            if (hasDynamicRow && modelRow == 0 && dynamicAppPort != null) {
+                connectionManager.stopAppPortForward()
+                connectionManager.forwardAppPort(dynamicAppPort)
                 updatePortsTableData()
+            } else {
+                val idx = if (hasDynamicRow) modelRow - 1 else modelRow
+                if (idx in profile.forwardedPorts.indices) {
+                    val p = profile.forwardedPorts[idx]
+                    connectionManager.stopSingleForward(p)
+                    connectionManager.startSingleForward(p)
+                    updatePortsTableData()
+                }
             }
         }
         val itemRemove = JMenuItem("Remove Port (Delete)", AllIcons.General.Remove)
@@ -1097,9 +1160,30 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
             Messages.showInfoMessage(project, "Please select a port from the table to delete.", "No Port Selected")
             return
         }
-        val profile = settings.activeProfile
-        if (row < profile.forwardedPorts.size) {
-            val portMap = profile.forwardedPorts[row]
+        val modelRow = portsTable.convertRowIndexToModel(row)
+        val profile = settings.activeProfileOrNull ?: return
+        val isConn = connectionManager.isConnected
+        val dynamicAppPort = connectionManager.activeAppPort
+        val hasDynamicRow = dynamicAppPort != null && isConn
+
+        if (hasDynamicRow && modelRow == 0 && dynamicAppPort != null) {
+            val confirm = Messages.showYesNoDialog(
+                project,
+                "Do you want to stop dynamic application port forwarding for port $dynamicAppPort?",
+                "Stop Dynamic App Port",
+                Messages.getQuestionIcon()
+            )
+            if (confirm == Messages.YES) {
+                connectionManager.stopAppPortForward()
+                updatePortsTableData()
+                connectionManager.notifyUser("Remote Flow: Port Stopped", "Dynamic App port $dynamicAppPort stopped")
+            }
+            return
+        }
+
+        val profileIndex = if (hasDynamicRow) modelRow - 1 else modelRow
+        if (profileIndex in profile.forwardedPorts.indices) {
+            val portMap = profile.forwardedPorts[profileIndex]
             val confirm = Messages.showYesNoDialog(
                 project,
                 "Are you sure you want to delete port forwarding for '${portMap.serviceName}' (${portMap.localPort} <-> ${portMap.remotePort})?",
@@ -1108,10 +1192,12 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
             )
             if (confirm == Messages.YES) {
                 connectionManager.stopSingleForward(portMap)
-                profile.forwardedPorts.removeAt(row)
+                profile.forwardedPorts.removeAt(profileIndex)
                 updatePortsTableData()
                 connectionManager.notifyUser("Remote Flow: Port Removed", "${portMap.serviceName} removed successfully")
             }
+        } else {
+            Messages.showInfoMessage(project, "Please select a valid port from the table to delete.", "No Port Selected")
         }
     }
 
@@ -1454,7 +1540,11 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
                 return@addActionListener
             }
             statusText.text = "Checking port $port..."
-            val cmd = "fuser -v $port/tcp 2>&1 || lsof -i :$port -P -n 2>&1 || ss -tulpn | grep :$port 2>&1 || echo 'Port $port is free (no process found)'"
+            val cmd = "(command -v ss >/dev/null 2>&1 && ss -tlpn sport = :$port 2>&1) || " +
+                "(command -v lsof >/dev/null 2>&1 && lsof -i :$port -P -n 2>&1) || " +
+                "(command -v fuser >/dev/null 2>&1 && fuser -v $port/tcp 2>&1) || " +
+                "(command -v netstat >/dev/null 2>&1 && netstat -tlpn | grep :$port 2>&1) || " +
+                "echo 'Port $port is free (no active process found)'"
             connectionManager.executeRemoteCommand(
                 cmd = cmd,
                 workingDir = "",
@@ -1491,7 +1581,11 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
             if (confirm != Messages.YES) return@addActionListener
 
             statusText.text = "Killing process on port $port..."
-            val killCmd = "fuser -k -9 $port/tcp 2>&1 || (PID=\$(lsof -t -i :$port); if [ -n \"\$PID\" ]; then kill -9 \$PID && echo \"Killed PID \$PID\"; else echo \"No process found on port $port\"; fi)"
+            val killCmd = "if command -v fuser >/dev/null 2>&1; then fuser -k -9 $port/tcp 2>&1; fi; " +
+                "PIDS=\$( (command -v lsof >/dev/null 2>&1 && lsof -t -i :$port 2>/dev/null) || " +
+                "(command -v fuser >/dev/null 2>&1 && fuser $port/tcp 2>/dev/null) || " +
+                "(command -v ss >/dev/null 2>&1 && ss -tulpn 2>/dev/null | grep -E \":$port\\b\" | grep -o -E 'pid=[0-9]+' | cut -d= -f2) ); " +
+                "if [ -n \"\$PIDS\" ]; then kill -9 \$PIDS 2>/dev/null && echo \"Terminated PID(s): \$PIDS\"; else echo \"Port $port cleared\"; fi"
             connectionManager.executeRemoteCommand(
                 cmd = killCmd,
                 workingDir = "",
