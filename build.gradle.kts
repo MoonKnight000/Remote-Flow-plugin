@@ -31,10 +31,9 @@ intellijPlatform {
         version = "1.0.0"
         vendor {
             name = "Murodjon"
-            email = "murodjon@dev.local"
-            url = "https://github.com/murodjon"
+            email = "murodjonbobobekov000@gmail.com"
+            url = "https://github.com/MoonKnight000/Remote-Flow-plugin"
         }
-        description = "Lightweight Remote Server Runner and Gateway-style Manager developed by Murodjon."
     }
 }
 

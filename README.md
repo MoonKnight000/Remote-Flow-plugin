@@ -1,33 +1,143 @@
-﻿# RemoteFlow: Ultra-light Remote Development & Docker Compose Plugin for IntelliJ IDEA
+# Remote Flow — Remote Server Runner & Development Gateway
 
-A zero-memory-overhead IntelliJ IDEA plugin designed to develop locally while building, running, and managing Docker containers remotely via secure SSH tunnels.
+[![IntelliJ Platform](https://img.shields.io/badge/Platform-IntelliJ%20IDEA%202024%2B-blue.svg)](https://www.jetbrains.com/idea/)
+[![Plugin Version](https://img.shields.io/badge/Version-1.0.0-emerald.svg)](https://github.com/MoonKnight000/Remote-Flow-plugin)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.2-purple.svg)](https://kotlinlang.org/)
+[![License](https://img.shields.io/badge/License-MIT-amber.svg)](LICENSE)
 
-## Features
+**Remote Flow** is a high-performance, zero-overhead remote development plugin for IntelliJ IDEA developed by **Murodjon**. It allows developers to code locally on their fast Windows, macOS, or Linux machine while seamlessly building, synchronizing, running, debugging, and monitoring applications directly on remote Linux servers or cloud instances via secure SSH.
 
-1. **Remote Docker Compose Controller:**
-   - One-click docker compose up -d --build
-   - docker compose down, estart, and ps
-   - Real-time ANSI colored log streaming inside IntelliJ's ConsoleView.
+---
 
-2. **Automatic Zero-Overhead Port Forwarding:**
-   - Instantly creates local tunnels for remote services:
-     - localhost:6379 -> Remote Redis
-     - localhost:5672 -> Remote RabbitMQ
-     - localhost:15672 -> Remote RabbitMQ Management
-     - localhost:8080 -> Remote App HTTP
-   - Allows testing directly with local .http files (e.g. lat.http) or local clients.
+## ⚡ Why Remote Flow? (Zero Headless IDE Overhead)
 
-3. **Differential File Sync:**
-   - Excludes heavy local build artifacts (.git, .gradle, uild, .idea).
-   - Syncs code diffs quickly using delta streaming.
+Traditional remote development solutions (such as JetBrains Gateway or headless remote IDE backends) require running a full IntelliJ backend instance on the remote server, consuming **2 GB – 4 GB of RAM**, generating heavy disk I/O, and causing UI lag over high-latency networks.
 
-4. **Zero Headless IDE Overhead:**
-   - Does NOT run the heavy JetBrains Gateway / Headless IDE backend on the server.
-   - Saves 2GB - 4GB RAM on the remote server.
+**Remote Flow takes a radically lightweight approach:**
+- **Local IDE Performance**: Your IDE, indexing, syntax analysis, and autocomplete run 100% locally on your machine with zero lag.
+- **Server Resources Conserved**: The remote server only runs your actual application (e.g. Spring Boot, Gradle, Docker, DBs) — saving gigabytes of memory.
+- **Instant Bi-Directional Forwarding**: Remote service ports (e.g. 8080, 5432, 6379, 5005) are tunneled transparently to `localhost` on your local PC.
 
-## How to Run & Test the Plugin
+---
 
-1. Open this project (C:\Users\Murodjon\IdeaProjects\remote-flow-plugin) in IntelliJ IDEA.
-2. Open the Gradle tool window on the right.
-3. Run the task: intellijPlatform -> runIde (or execute ./gradlew runIde).
-4. A sandbox IntelliJ IDEA window will open with the **RemoteFlow** tool window docked on the right side.
+## 🚀 Key Features
+
+### 1. Seamless New UI Run Toolbar Integration
+- **Direct Run Widget Placement**: Remote Flow's **Remote Run** (emerald cloud play), **Remote Debug** (amber cloud bug), and **Remote Stop** buttons sit directly beside your Run Configuration selector (e.g., next to `HomeSaleV2Application`) in the main header toolbar.
+- **Smart Run Delegation (`RemoteFlowProgramRunner`)**: Optionally delegate the standard IntelliJ Run (`Shift + F10`) and Debug (`Shift + F9`) buttons to automatically execute on the active remote server with automatic port forwarding.
+- **Interactive Ready Detection**: Automatically parses stdout to detect when Spring Boot / Tomcat / Netty is ready, printing clickable local URLs (e.g. `http://localhost:8080`).
+
+### 2. High-Speed Differential Code Synchronization
+- **Rsync & SSH SFTP Engines**: Sync only changed files in milliseconds using delta compression and checksum verification.
+- **Intelligent Ignore Rules**: Built-in smart filtering excludes heavy folders (`.git`, `.gradle`, `build`, `target`, `out`, `.idea`, `node_modules`, temporary files, and log files).
+- **Auto-Sync on Save**: Automatically syncs modified files to the remote server whenever you press `Ctrl + S`.
+- **Targeted Sync**: Right-click any file, package, or directory in the Project View or Editor to sync only that specific file or folder.
+
+### 3. One-Click Remote JVM Debugging
+- Automatically forwards JVM remote socket transport port `5005` to `localhost:5005`.
+- Automatically connects IntelliJ's native remote debugger to the running application on the server as soon as the JVM socket listener opens.
+- Set breakpoints, inspect variables, evaluate expressions, and step through code as if the application was running locally.
+
+### 4. Bi-Directional SSH Port Forwarding & Port Scanner
+- **Transparent Port Tunnels**: Map remote databases, message queues, and microservices directly to your local computer:
+  - `localhost:8080` ➔ Remote Backend HTTP API
+  - `localhost:5432` ➔ Remote PostgreSQL Database
+  - `localhost:3306` ➔ Remote MySQL Database
+  - `localhost:6379` ➔ Remote Redis Cache
+  - `localhost:5672` / `15672` ➔ Remote RabbitMQ & Management UI
+  - `localhost:27017` ➔ Remote MongoDB
+  - `localhost:5173` / `3000` ➔ Frontend Dev Servers (Vite / React / Next.js)
+- **Active Listening Port Scanner**: Scans remote `ss` / `netstat` sockets to detect active listening ports and processes with friendly process icons, allowing one-click tunnel creation.
+- **Bi-Directional Support**: Supports both `Local -> Host` (ssh `-L`) and `Host -> Local` (ssh `-R`) forwarding directions.
+
+### 5. Hardware Resource Monitor & Remote Task Manager
+- **Live Health Metrics**: Monitor remote **CPU utilization**, **RAM consumption**, and **Disk usage** in real time directly from the IntelliJ Status Bar and Tool Window.
+- **Interactive Remote Task Manager**: Inspect active Linux processes, memory usage, CPU load, and terminate runaway or hung processes with one click.
+
+### 6. Remote File Explorer & Configuration Manager
+- **Remote File Browser**: Navigate remote server directory trees, view file sizes and permissions, create directories, upload local files, and inspect files remotely.
+- **Remote Config Editor**: Safely view and edit remote `.env`, `application.yml`, and `application.properties` files directly from IntelliJ with automatic backup creation (`.bak`) before saving.
+
+### 7. Unified Log Tool Window & Embedded Terminal
+- **Colorized ANSI Console**: Dedicated "Remote Flow Log" tool window at the bottom of the IDE with real-time log streaming, ANSI color support, search filtering, log level categories (`ALL`, `RUN`, `SYNC`, `SSH`, `SYSTEM`), pause, and log export.
+- **Integrated SSH Terminal**: Open interactive SSH terminal sessions to the active server directly inside IntelliJ with a single click.
+
+### 8. Multi-Server Profiles & Keep-Alive Watchdog
+- Manage multiple environments (e.g. `Dev`, `Staging`, `Cloud Server`).
+- Supports both **Password** and **SSH Private Key** (`.pem`, `id_rsa`) authentication.
+- Automatic keep-alive heartbeat with seamless auto-reconnection in case of transient network dropouts.
+
+---
+
+## ⌨️ Default Keyboard Shortcuts
+
+| Shortcut | Action | Description |
+| :--- | :--- | :--- |
+| `Alt + Shift + R` | **Remote Run** | Sync differential changes, build, and run application on active remote server |
+| `Alt + Shift + D` | **Remote Debug** | Run on remote server with JVM debug mode on port `5005` and auto-attach |
+| `Alt + Shift + S` | **Remote Stop** | Terminate running remote application process |
+| `Alt + Shift + U` | **Fast Sync** | Synchronize all project files to the active remote server |
+| `Alt + Shift + L` | **Show Logs** | Focus and open the unified Remote Flow Log console |
+| `Shift + F10` | **Standard Run** | *(When Run Delegation is enabled)* Automatically routes to Remote Run |
+| `Shift + F9` | **Standard Debug** | *(When Run Delegation is enabled)* Automatically routes to Remote Debug |
+
+---
+
+## 🛠️ Quick Start Guide
+
+### Step 1: Install the Plugin
+1. In IntelliJ IDEA, go to **Settings** (`Ctrl + Alt + S`) ➔ **Plugins**.
+2. Click the gear icon ⚙️ ➔ **Install Plugin from Disk...**.
+3. Select `remote-flow-plugin-1.0.0.zip` from `build/distributions/`.
+4. Restart IntelliJ IDEA if prompted.
+
+### Step 2: Configure Your Server Profile
+1. Go to **Settings** ➔ **Tools** ➔ **Remote Flow** (or click **Settings** in the Remote Flow Tool Window on the right).
+2. Enter your server connection credentials:
+   - **Server Name**: e.g., `Dev Server (Ubuntu)`
+   - **Host & Port**: e.g., `192.168.1.100`, port `22`
+   - **Authentication**: Password or SSH Private Key (`.pem` / `id_rsa`)
+   - **Remote Project Path**: e.g., `/home/ubuntu/remote-flow/myapp`
+3. Click **Test Connection** to verify access and remote directory setup.
+4. Click **Detect Remote Java** to automatically detect and configure `JAVA_HOME`.
+5. Under **Forwarded Ports**, add your desired ports or use **Scan Active Ports** to discover running services.
+6. Click **Apply** and **OK**.
+
+### Step 3: Run & Debug Remotely
+1. Select your active server from the **Remote Flow** tool window or status bar widget.
+2. Click **Connect** (or simply click **Remote Run** — it will connect automatically).
+3. Click the **Remote Run** button (green play with cloud) next to your Run Configuration dropdown (e.g. `HomeSaleV2Application`).
+4. Watch real-time build and execution logs in the **Remote Flow Log** panel.
+5. Once your application starts, open `http://localhost:8080` in your local browser!
+
+---
+
+## 🔧 Building from Source
+
+```bash
+# Clone the repository
+git clone https://github.com/MoonKnight000/Remote-Flow-plugin.git
+cd Remote-Flow-plugin
+
+# Build and verify the plugin
+./gradlew buildPlugin
+
+# Run in an isolated IntelliJ sandbox instance
+./gradlew runIde
+```
+The packaged plugin archive will be generated at `build/distributions/remote-flow-plugin-1.0.0.zip`.
+
+---
+
+## 👤 Author & Support
+
+- **Author**: Murodjon Bobobekov
+- **Email**: [murodjonbobobekov000@gmail.com](mailto:murodjonbobobekov000@gmail.com)
+- **GitHub**: [@MoonKnight000](https://github.com/MoonKnight000)
+- **Repository**: [Remote-Flow-plugin](https://github.com/MoonKnight000/Remote-Flow-plugin)
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
