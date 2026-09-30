@@ -253,7 +253,7 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
                     val initialPort = detectedAppPort.get()
                     if (initialPort > 0) {
                         connMgr.forwardAppPort(initialPort)
-                        val initMsg = "[PORT FORWARD] 🔀 Port forwarding initialized: localhost:$initialPort -> remote:$initialPort\n"
+                        val initMsg = "[PORT FORWARD] 🔀 Remote application port :$initialPort is forwarded locally to http://localhost:$initialPort\n"
                         logService.log(initMsg, uz.remote.flow.logging.LogCategory.RUN, p.name)
                     }
                 }
@@ -274,7 +274,7 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
                             if (portInLog != null && portInLog != detectedAppPort.get()) {
                                 detectedAppPort.set(portInLog)
                                 connMgr.forwardAppPort(portInLog)
-                                val forwardMsg = "[PORT FORWARD] 🔀 Application port detected ($portInLog). Forwarding: localhost:$portInLog -> remote:$portInLog\n"
+                                val forwardMsg = "[PORT FORWARD] 🔀 Remote application port :$portInLog detected! Forwarded locally to http://localhost:$portInLog\n"
                                 logService.log(forwardMsg, uz.remote.flow.logging.LogCategory.RUN, p.name)
                             }
 
@@ -479,7 +479,7 @@ class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in 
                     val initialPort = detectedAppPort.get()
                     if (initialPort > 0) {
                         connMgr.forwardAppPort(initialPort)
-                        val initMsg = "[PORT FORWARD] 🔀 Port forwarding initialized: localhost:$initialPort -> remote:$initialPort\n"
+                        val initMsg = "[PORT FORWARD] 🔀 Remote application port :$initialPort is forwarded locally to http://localhost:$initialPort\n"
                         logService.log(initMsg, uz.remote.flow.logging.LogCategory.RUN, p.name)
                     }
                 }
@@ -502,7 +502,7 @@ class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in 
                             if (portInLog != null && portInLog != detectedAppPort.get()) {
                                 detectedAppPort.set(portInLog)
                                 connMgr.forwardAppPort(portInLog)
-                                val forwardMsg = "[PORT FORWARD] 🔀 Application port detected ($portInLog). Forwarding: localhost:$portInLog -> remote:$portInLog\n"
+                                val forwardMsg = "[PORT FORWARD] 🔀 Remote application port :$portInLog detected! Forwarded locally to http://localhost:$portInLog\n"
                                 logService.log(forwardMsg, uz.remote.flow.logging.LogCategory.RUN, p.name)
                             }
 

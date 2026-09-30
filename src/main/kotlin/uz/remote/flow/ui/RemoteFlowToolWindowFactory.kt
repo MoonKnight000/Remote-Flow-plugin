@@ -170,6 +170,13 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
             override fun processStateChanged(running: Boolean, command: String?) {
                 ApplicationManager.getApplication().invokeLater {
                     updateProcessStateUi(running)
+                    updatePortsTableData()
+                }
+            }
+
+            override fun portForwardingChanged() {
+                ApplicationManager.getApplication().invokeLater {
+                    updatePortsTableData()
                 }
             }
         })
@@ -859,9 +866,10 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
             val dynamicAppPort = connectionManager.activeAppPort
             val hasDynamicRow = dynamicAppPort != null && isConn
 
-            if (hasDynamicRow && modelRow == 0 && dynamicAppPort != null) {
+            if (hasDynamicRow && modelRow == 0) {
+                val appPort = dynamicAppPort!!
                 connectionManager.stopAppPortForward()
-                connectionManager.forwardAppPort(dynamicAppPort)
+                connectionManager.forwardAppPort(appPort)
                 updatePortsTableData()
             } else {
                 val idx = if (hasDynamicRow) modelRow - 1 else modelRow
@@ -1114,7 +1122,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val dynamicAppPort = connectionManager.activeAppPort
         if (dynamicAppPort != null && isConn) {
             val status = "● Active"
-            val directionText = "💻 Local ➔ 🌐 Host"
+            val directionText = "🌐 Host ➔ 💻 Local (App)"
             val localAddr = "localhost:$dynamicAppPort"
             val remoteAddr = "remote:$dynamicAppPort"
             val action = "http://localhost:$dynamicAppPort (App)"
@@ -1123,7 +1131,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
         for (p in activeProfile.forwardedPorts) {
             val status = if (isConn && p.isForwarded) "● Active" else if (isConn) "● Ready" else "○ Stopped"
-            val directionText = if (p.direction == ForwardDirection.REMOTE_TO_LOCAL) "🌐 Host ➔ 💻 Local" else "💻 Local ➔ 🌐 Host"
+            val directionText = if (p.direction == ForwardDirection.REMOTE_TO_LOCAL) "💻 Local ➔ 🌐 Host (Reverse)" else "🌐 Host ➔ 💻 Local"
             val localAddr = "localhost:" + p.localPort
             val remoteAddr = "remote:" + p.remotePort
             val action = when {
@@ -1166,10 +1174,11 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         val dynamicAppPort = connectionManager.activeAppPort
         val hasDynamicRow = dynamicAppPort != null && isConn
 
-        if (hasDynamicRow && modelRow == 0 && dynamicAppPort != null) {
+        if (hasDynamicRow && modelRow == 0) {
+            val appPort = dynamicAppPort!!
             val confirm = Messages.showYesNoDialog(
                 project,
-                "Do you want to stop dynamic application port forwarding for port $dynamicAppPort?",
+                "Do you want to stop dynamic application port forwarding for port $appPort?",
                 "Stop Dynamic App Port",
                 Messages.getQuestionIcon()
             )
@@ -1747,12 +1756,12 @@ class AddPortForwardDialog(
 
     private val connectionManager = RemoteConnectionManager.getInstance(project)
 
-    private val radioLocalToRemote = JRadioButton("💻 Local ➔ 🌐 Host (Local Port Forwarding, ssh -L)", true)
-    private val radioRemoteToLocal = JRadioButton("🌐 Host ➔ 💻 Local (Reverse Port Forwarding, ssh -R)", false)
+    private val radioLocalToRemote = JRadioButton("🌐 Host ➔ 💻 Local (Forward remote service to localhost, ssh -L)", true)
+    private val radioRemoteToLocal = JRadioButton("💻 Local ➔ 🌐 Host (Reverse forward local service to remote, ssh -R)", false)
     private val serviceNameField = JBTextField("Backend API")
     private val localPortField = JBTextField("8080")
     private val remotePortField = JBTextField("8080")
-    private val hintLabel = JLabel("Connect from your local machine to remote service (DB, Redis, API)")
+    private val hintLabel = JLabel("Access remote service (Spring Boot, DB, Redis) on your local machine (localhost:port)")
 
     // Dynamic Active Port Detection
     private data class DetectedPort(val port: Int, val process: String, val address: String)
@@ -1768,10 +1777,10 @@ class AddPortForwardDialog(
         bg.add(radioRemoteToLocal)
 
         radioLocalToRemote.addActionListener {
-            hintLabel.text = "Connect from your local machine to remote service (DB, Redis, API)"
+            hintLabel.text = "Access remote service (Spring Boot, DB, Redis) on your local machine (localhost:port)"
         }
         radioRemoteToLocal.addActionListener {
-            hintLabel.text = "Expose local service (Frontend, Webhook, Mock) to remote server"
+            hintLabel.text = "Expose your local computer's service (Frontend, Webhook, Mock) to the remote server"
         }
 
         init()

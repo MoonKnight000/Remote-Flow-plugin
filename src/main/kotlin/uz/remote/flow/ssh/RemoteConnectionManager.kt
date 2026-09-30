@@ -28,6 +28,7 @@ class RemoteConnectionManager(private val project: Project) {
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
     private val activeTunnels = ConcurrentHashMap<Int, ServerSocket>()
     private val activeRemoteForwards = ConcurrentHashMap<Int, RemotePortForwarder.Forward>()
+    private val tunnelLock = Any()
 
     val settings get() = uz.remote.flow.settings.RemoteFlowSettings.getInstance(project)
     val config get() = settings.config
@@ -361,16 +362,20 @@ class RemoteConnectionManager(private val project: Project) {
         if (!client.isConnected) return false
         if (port <= 0 || port > 65535) return false
 
-        val current = activeAppPort
-        if (current == port && activeTunnels.containsKey(port)) {
-            return true
+        synchronized(tunnelLock) {
+            val current = activeAppPort
+            val existing = activeTunnels[port]
+            if (current == port && existing != null && !existing.isClosed && existing.isBound) {
+                return true
+            }
+
+            if (current != null && current != port) {
+                stopAppPortForward()
+            }
+
+            activeAppPort = port
         }
 
-        if (current != null && current != port) {
-            stopAppPortForward()
-        }
-
-        activeAppPort = port
         val mapping = PortMapping(
             localPort = port,
             remotePort = port,
@@ -379,6 +384,7 @@ class RemoteConnectionManager(private val project: Project) {
             direction = ForwardDirection.LOCAL_TO_REMOTE
         )
         startSingleForward(mapping)
+        notifyPortForwardingChanged()
         return true
     }
 
@@ -386,8 +392,11 @@ class RemoteConnectionManager(private val project: Project) {
      * Stops and closes the dynamic application port tunnel immediately, releasing local socket resources.
      */
     fun stopAppPortForward() {
-        val port = activeAppPort ?: return
-        activeAppPort = null
+        val port: Int
+        synchronized(tunnelLock) {
+            port = activeAppPort ?: return
+            activeAppPort = null
+        }
         val mapping = PortMapping(
             localPort = port,
             remotePort = port,
@@ -395,6 +404,7 @@ class RemoteConnectionManager(private val project: Project) {
             direction = ForwardDirection.LOCAL_TO_REMOTE
         )
         stopSingleForward(mapping)
+        notifyPortForwardingChanged()
     }
 
     fun startSingleForward(portMap: PortMapping) {
@@ -402,33 +412,56 @@ class RemoteConnectionManager(private val project: Project) {
         if (!client.isConnected) return
 
         if (portMap.direction == ForwardDirection.LOCAL_TO_REMOTE) {
-            if (activeTunnels.containsKey(portMap.localPort)) {
-                portMap.isForwarded = true
-                return
-            }
+            val serverSocket: ServerSocket
+            synchronized(tunnelLock) {
+                val existing = activeTunnels[portMap.localPort]
+                if (existing != null && !existing.isClosed && existing.isBound) {
+                    portMap.isForwarded = true
+                    return
+                }
 
-            executor.submit {
                 try {
-                    val serverSocket = ServerSocket()
+                    serverSocket = ServerSocket()
                     serverSocket.reuseAddress = true
                     serverSocket.bind(InetSocketAddress("127.0.0.1", portMap.localPort))
                     activeTunnels[portMap.localPort] = serverSocket
                     portMap.isForwarded = true
+                } catch (e: Exception) {
+                    portMap.isForwarded = false
+                    try {
+                        uz.remote.flow.logging.RemoteFlowLogService.getInstance(project).log(
+                            "[PORT FORWARD WARNING] Local port ${portMap.localPort} could not be bound: ${e.message}\n",
+                            uz.remote.flow.logging.LogCategory.SSH,
+                            config.activeProfile.name
+                        )
+                    } catch (_: Exception) {}
+                    return
+                }
+            }
 
+            executor.submit {
+                try {
                     val params = Parameters("127.0.0.1", portMap.localPort, "127.0.0.1", portMap.remotePort)
                     client.newLocalPortForwarder(params, serverSocket).listen()
                 } catch (e: Exception) {
-                    portMap.isForwarded = false
-                    activeTunnels.remove(portMap.localPort)?.let {
-                        try { it.close() } catch (_: Exception) {}
+                    synchronized(tunnelLock) {
+                        if (activeTunnels[portMap.localPort] === serverSocket) {
+                            activeTunnels.remove(portMap.localPort)
+                            portMap.isForwarded = false
+                        }
                     }
+                    try { serverSocket.close() } catch (_: Exception) {}
+                    notifyPortForwardingChanged()
                 }
             }
+            notifyPortForwardingChanged()
         } else {
             // ForwardDirection.REMOTE_TO_LOCAL (Host -> Local, ssh -R)
-            if (activeRemoteForwards.containsKey(portMap.remotePort)) {
-                portMap.isForwarded = true
-                return
+            synchronized(tunnelLock) {
+                if (activeRemoteForwards.containsKey(portMap.remotePort)) {
+                    portMap.isForwarded = true
+                    return
+                }
             }
 
             executor.submit {
@@ -436,27 +469,48 @@ class RemoteConnectionManager(private val project: Project) {
                     val forward = RemotePortForwarder.Forward(portMap.remotePort)
                     val listener = SocketForwardingConnectListener(InetSocketAddress("127.0.0.1", portMap.localPort))
                     client.remotePortForwarder.bind(forward, listener)
-                    activeRemoteForwards[portMap.remotePort] = forward
-                    portMap.isForwarded = true
+                    synchronized(tunnelLock) {
+                        activeRemoteForwards[portMap.remotePort] = forward
+                        portMap.isForwarded = true
+                    }
+                    notifyPortForwardingChanged()
                 } catch (e: Exception) {
-                    portMap.isForwarded = false
-                    activeRemoteForwards.remove(portMap.remotePort)
+                    synchronized(tunnelLock) {
+                        portMap.isForwarded = false
+                        activeRemoteForwards.remove(portMap.remotePort)
+                    }
+                    try {
+                        uz.remote.flow.logging.RemoteFlowLogService.getInstance(project).log(
+                            "[PORT FORWARD WARNING] Remote port ${portMap.remotePort} reverse bind failed: ${e.message}\n",
+                            uz.remote.flow.logging.LogCategory.SSH,
+                            config.activeProfile.name
+                        )
+                    } catch (_: Exception) {}
                 }
             }
         }
     }
 
     fun stopSingleForward(portMap: PortMapping) {
-        if (portMap.direction == ForwardDirection.LOCAL_TO_REMOTE) {
-            activeTunnels.remove(portMap.localPort)?.let { socket ->
-                try { socket.close() } catch (_: Exception) {}
+        synchronized(tunnelLock) {
+            if (portMap.direction == ForwardDirection.LOCAL_TO_REMOTE) {
+                activeTunnels.remove(portMap.localPort)?.let { socket ->
+                    try { socket.close() } catch (_: Exception) {}
+                }
+            } else {
+                activeRemoteForwards.remove(portMap.remotePort)?.let { forward ->
+                    try { sshClient?.remotePortForwarder?.cancel(forward) } catch (_: Exception) {}
+                }
             }
-        } else {
-            activeRemoteForwards.remove(portMap.remotePort)?.let { forward ->
-                try { sshClient?.remotePortForwarder?.cancel(forward) } catch (_: Exception) {}
-            }
+            portMap.isForwarded = false
         }
-        portMap.isForwarded = false
+        notifyPortForwardingChanged()
+    }
+
+    fun notifyPortForwardingChanged() {
+        try {
+            project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).portForwardingChanged()
+        } catch (_: Exception) {}
     }
 
     fun restartAllTunnels(profile: ServerProfile = config.activeProfile) {

@@ -198,7 +198,7 @@ class RemoteFlowProgramRunner : ProgramRunner<RunnerSettings> {
                     val initialPort = detectedAppPort.get()
                     if (initialPort > 0) {
                         connMgr.forwardAppPort(initialPort)
-                        val initMsg = "[PORT FORWARD] 🔀 Port forwarding initialized: localhost:$initialPort -> remote:$initialPort\n"
+                        val initMsg = "[PORT FORWARD] 🔀 Remote application port :$initialPort is forwarded locally to http://localhost:$initialPort\n"
                         processHandler.printSystem(initMsg)
                         logService.log(initMsg, LogCategory.RUN, p.name)
                     }
@@ -226,7 +226,7 @@ class RemoteFlowProgramRunner : ProgramRunner<RunnerSettings> {
                             if (portInLog != null && portInLog != detectedAppPort.get()) {
                                 detectedAppPort.set(portInLog)
                                 connMgr.forwardAppPort(portInLog)
-                                val forwardMsg = "[PORT FORWARD] 🔀 Application port detected ($portInLog). Forwarding: localhost:$portInLog -> remote:$portInLog\n"
+                                val forwardMsg = "[PORT FORWARD] 🔀 Remote application port :$portInLog detected! Forwarded locally to http://localhost:$portInLog\n"
                                 processHandler.printSystem(forwardMsg)
                                 logService.log(forwardMsg, LogCategory.RUN, p.name)
                             }
