@@ -48,6 +48,7 @@ class RemoteConnectionManager(private val project: Project) {
     @Volatile private var activeSession: net.schmizz.sshj.connection.channel.direct.Session? = null
     @Volatile private var activeCommand: net.schmizz.sshj.connection.channel.direct.Session.Command? = null
     @Volatile var activeProcessHandler: uz.remote.flow.execution.RemoteFlowProcessHandler? = null
+    @Volatile var activeAppPort: Int? = null
 
     fun sendProcessInput(data: ByteArray) {
         try {
@@ -336,8 +337,64 @@ class RemoteConnectionManager(private val project: Project) {
         if (!client.isConnected) return
 
         for (portMap in profile.forwardedPorts) {
+            // Do not permanently forward backend application ports on SSH connection.
+            // Application ports are forwarded dynamically and on-demand only when the application is running.
+            if (isAppPort(portMap)) {
+                continue
+            }
             startSingleForward(portMap)
         }
+    }
+
+    private fun isAppPort(portMap: PortMapping): Boolean {
+        val name = portMap.serviceName.lowercase()
+        return name.contains("backend") || name == "app" || name.startsWith("app (") ||
+                (portMap.localPort == 8080 && portMap.remotePort == 8080 && (name.contains("backend") || name.contains("app") || name == "service"))
+    }
+
+    /**
+     * Dynamically forwards the application port (e.g. 9789 -> 9789) when the application runs.
+     * Closes any previous dynamic application port first so no obsolete tunnels linger.
+     */
+    fun forwardAppPort(port: Int): Boolean {
+        val client = sshClient ?: return false
+        if (!client.isConnected) return false
+        if (port <= 0 || port > 65535) return false
+
+        val current = activeAppPort
+        if (current == port && activeTunnels.containsKey(port)) {
+            return true
+        }
+
+        if (current != null && current != port) {
+            stopAppPortForward()
+        }
+
+        activeAppPort = port
+        val mapping = PortMapping(
+            localPort = port,
+            remotePort = port,
+            serviceName = "App ($port)",
+            isForwarded = true,
+            direction = ForwardDirection.LOCAL_TO_REMOTE
+        )
+        startSingleForward(mapping)
+        return true
+    }
+
+    /**
+     * Stops and closes the dynamic application port tunnel immediately, releasing local socket resources.
+     */
+    fun stopAppPortForward() {
+        val port = activeAppPort ?: return
+        activeAppPort = null
+        val mapping = PortMapping(
+            localPort = port,
+            remotePort = port,
+            serviceName = "App ($port)",
+            direction = ForwardDirection.LOCAL_TO_REMOTE
+        )
+        stopSingleForward(mapping)
     }
 
     fun startSingleForward(portMap: PortMapping) {
@@ -480,6 +537,7 @@ class RemoteConnectionManager(private val project: Project) {
                 onComplete(-1)
             } finally {
                 if (isLongRunning) {
+                    stopAppPortForward()
                     isProcessRunning = false
                     runningCommand = null
                     activeSession = null
@@ -531,6 +589,7 @@ class RemoteConnectionManager(private val project: Project) {
                 }
             }
 
+            stopAppPortForward()
             isProcessRunning = false
             runningCommand = null
             com.intellij.ide.ActivityTracker.getInstance().inc()
@@ -612,6 +671,7 @@ class RemoteConnectionManager(private val project: Project) {
             sshClient?.close()
         } catch (_: Exception) {}
         sshClient = null
+        stopAppPortForward()
 
         if (isProcessRunning) {
             isProcessRunning = false

@@ -103,8 +103,7 @@ data class ServerProfile(
             PortMapping(6379, 6379, "Redis"),
             PortMapping(5672, 5672, "RabbitMQ"),
             PortMapping(15672, 15672, "RabbitMQ Management"),
-            PortMapping(5005, 5005, "JVM Remote Debug"),
-            PortMapping(8080, 8080, "Backend App")
+            PortMapping(5005, 5005, "JVM Remote Debug")
         )
     }
 }

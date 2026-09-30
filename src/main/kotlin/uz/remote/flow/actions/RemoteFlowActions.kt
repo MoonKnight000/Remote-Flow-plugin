@@ -234,18 +234,28 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
             val shouldSync = runConfig?.autoSync ?: true
             val shouldForward = runConfig?.forwardPorts ?: true
 
+            val rawCmd = if (runConfig != null && runConfig.runCommand.isNotBlank()) {
+                runConfig.runCommand.trim()
+            } else {
+                p.runCommand.ifBlank { "./gradlew bootRun" }
+            }
+            val cmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(rawCmd, p.javaHome)
+
             val doRun = {
                 // 1. Ensure configured port forwards are active
+                val detectedAppPort = java.util.concurrent.atomic.AtomicInteger(
+                    uz.remote.flow.ssh.DynamicPortDetector.resolveInitialAppPort(project, rawCmd, 0)
+                )
+
                 if (shouldForward) {
                     connMgr.startPortForwarding(p)
+                    val initialPort = detectedAppPort.get()
+                    if (initialPort > 0) {
+                        connMgr.forwardAppPort(initialPort)
+                        val initMsg = "[PORT FORWARD] 🔀 Port forwarding initialized: localhost:$initialPort -> remote:$initialPort\n"
+                        logService.log(initMsg, uz.remote.flow.logging.LogCategory.RUN, p.name)
+                    }
                 }
-
-                val rawCmd = if (runConfig != null && runConfig.runCommand.isNotBlank()) {
-                    runConfig.runCommand.trim()
-                } else {
-                    p.runCommand.ifBlank { "./gradlew bootRun" }
-                }
-                val cmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(rawCmd, p.javaHome)
 
                 val executeCmd = {
                     val javaInfo = if (p.javaHome.isNotBlank()) " (Java: ${p.javaHome})" else ""
@@ -257,10 +267,21 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
                         isLongRunning = true,
                         onOutput = { line ->
                             logService.log(line, uz.remote.flow.logging.LogCategory.RUN, p.name)
-                            if (!readyNotified.get() && (line.contains("Tomcat started on port(s):") || line.contains("Netty started on port") || (line.contains("Started ") && line.contains(" in ") && line.contains("seconds")))) {
+
+                            // Detect dynamic app port from stdout log (Spring Boot, Tomcat, Netty, etc.)
+                            val portInLog = uz.remote.flow.ssh.DynamicPortDetector.extractPortFromLine(line)
+                            if (portInLog != null && portInLog != detectedAppPort.get()) {
+                                detectedAppPort.set(portInLog)
+                                connMgr.forwardAppPort(portInLog)
+                                val forwardMsg = "[PORT FORWARD] 🔀 Application port detected ($portInLog). Forwarding: localhost:$portInLog -> remote:$portInLog\n"
+                                logService.log(forwardMsg, uz.remote.flow.logging.LogCategory.RUN, p.name)
+                            }
+
+                            if (!readyNotified.get() && uz.remote.flow.ssh.DynamicPortDetector.isAppReadyLine(line)) {
                                 readyNotified.set(true)
-                                val httpPort = p.forwardedPorts.firstOrNull { fp -> fp.direction == uz.remote.flow.ssh.ForwardDirection.LOCAL_TO_REMOTE }?.localPort ?: 8080
-                                val targetUrl = if (p.browserUrl.isNotBlank()) p.browserUrl else "http://localhost:$httpPort"
+                                val finalPort = if (detectedAppPort.get() > 0) detectedAppPort.get() else (portInLog ?: 8080)
+                                connMgr.forwardAppPort(finalPort)
+                                val targetUrl = uz.remote.flow.ssh.DynamicPortDetector.buildTargetUrl(p.browserUrl, finalPort)
                                 logService.log("[APP READY] 🚀 Application is ready! Accessible locally at: $targetUrl\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
                                 if (p.openBrowserOnReady) {
                                     ApplicationManager.getApplication().invokeLater {
@@ -277,6 +298,7 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
                             }
                         },
                         onComplete = { code ->
+                            connMgr.stopAppPortForward()
                             logService.log("[REMOTE RUN FINISHED] Exit code: $code\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
                             connMgr.notifyUser("Remote Flow: Execution Finished", "Application completed on server ${p.name} (Exit code: $code)", NotificationType.INFORMATION)
                         }
@@ -439,16 +461,26 @@ class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in 
             val doDebug = {
                 // 1. Ensure port 5005 and user ports are forwarded
                 connMgr.startSingleForward(uz.remote.flow.ssh.PortMapping(5005, 5005, "JVM Debug", direction = uz.remote.flow.ssh.ForwardDirection.LOCAL_TO_REMOTE))
-                if (shouldForward) {
-                    connMgr.startPortForwarding(p)
-                }
-
                 val rawCmd = if (runConfig != null && runConfig.debugCommand.isNotBlank()) {
                     runConfig.debugCommand.trim()
                 } else {
                     p.debugCommand.ifBlank { "./gradlew bootRun --debug-jvm" }
                 }
                 val cmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(rawCmd, p.javaHome)
+
+                val detectedAppPort = java.util.concurrent.atomic.AtomicInteger(
+                    uz.remote.flow.ssh.DynamicPortDetector.resolveInitialAppPort(project, rawCmd, 0)
+                )
+
+                if (shouldForward) {
+                    connMgr.startPortForwarding(p)
+                    val initialPort = detectedAppPort.get()
+                    if (initialPort > 0) {
+                        connMgr.forwardAppPort(initialPort)
+                        val initMsg = "[PORT FORWARD] 🔀 Port forwarding initialized: localhost:$initialPort -> remote:$initialPort\n"
+                        logService.log(initMsg, uz.remote.flow.logging.LogCategory.RUN, p.name)
+                    }
+                }
 
                 val executeCmd = {
                     val javaInfo = if (p.javaHome.isNotBlank()) " (Java: ${p.javaHome})" else ""
@@ -462,15 +494,26 @@ class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in 
                         isLongRunning = true,
                         onOutput = { line ->
                             logService.log(line, uz.remote.flow.logging.LogCategory.RUN, p.name)
+
+                            // Detect dynamic app port from stdout log (Spring Boot, Tomcat, Netty, etc.)
+                            val portInLog = uz.remote.flow.ssh.DynamicPortDetector.extractPortFromLine(line)
+                            if (portInLog != null && portInLog != detectedAppPort.get()) {
+                                detectedAppPort.set(portInLog)
+                                connMgr.forwardAppPort(portInLog)
+                                val forwardMsg = "[PORT FORWARD] 🔀 Application port detected ($portInLog). Forwarding: localhost:$portInLog -> remote:$portInLog\n"
+                                logService.log(forwardMsg, uz.remote.flow.logging.LogCategory.RUN, p.name)
+                            }
+
                             if (!debuggerAttached.get() && (line.contains("Listening for transport dt_socket at address:") || line.contains("dt_socket") || line.contains("5005"))) {
                                 if (debuggerAttached.compareAndSet(false, true)) {
                                     uz.remote.flow.debug.RemoteDebugHelper.attachRemoteDebugger(project, "localhost", 5005, p.name)
                                 }
                             }
-                            if (!readyNotified.get() && (line.contains("Tomcat started on port(s):") || line.contains("Netty started on port") || (line.contains("Started ") && line.contains(" in ") && line.contains("seconds")))) {
+                            if (!readyNotified.get() && uz.remote.flow.ssh.DynamicPortDetector.isAppReadyLine(line)) {
                                 readyNotified.set(true)
-                                val httpPort = p.forwardedPorts.firstOrNull { fp -> fp.direction == uz.remote.flow.ssh.ForwardDirection.LOCAL_TO_REMOTE }?.localPort ?: 8080
-                                val targetUrl = if (p.browserUrl.isNotBlank()) p.browserUrl else "http://localhost:$httpPort"
+                                val finalPort = if (detectedAppPort.get() > 0) detectedAppPort.get() else (portInLog ?: 8080)
+                                connMgr.forwardAppPort(finalPort)
+                                val targetUrl = uz.remote.flow.ssh.DynamicPortDetector.buildTargetUrl(p.browserUrl, finalPort)
                                 logService.log("[APP READY] 🚀 Application is ready! Accessible locally at: $targetUrl\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
                                 if (p.openBrowserOnReady) {
                                     ApplicationManager.getApplication().invokeLater {
@@ -487,6 +530,7 @@ class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in 
                             }
                         },
                         onComplete = { code ->
+                            connMgr.stopAppPortForward()
                             logService.log("[REMOTE DEBUG EXIT] Exit code: $code\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
                         }
                     )

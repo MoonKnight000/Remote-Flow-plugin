@@ -757,18 +757,17 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
             override fun mouseClicked(e: MouseEvent) {
                 if (e.clickCount == 2) {
                     val row = portsTable.selectedRow
-                    val profile = settings.activeProfileOrNull ?: return
-                    if (row in profile.forwardedPorts.indices) {
-                        val p = profile.forwardedPorts[row]
-                        val port = if (p.direction == ForwardDirection.LOCAL_TO_REMOTE) p.localPort else p.remotePort
-                        if (port in listOf(80, 443, 8080, 8000, 3000, 5173, 15672, 9000, 8081)) {
+                    if (row >= 0 && row < portsTableModel.rowCount) {
+                        val localAddr = portsTableModel.getValueAt(row, 3) as? String ?: ""
+                        val port = localAddr.substringAfter("localhost:").toIntOrNull()
+                        if (port != null) {
                             try {
                                 Desktop.getDesktop().browse(URI("http://localhost:$port"))
-                            } catch (_: Exception) {}
-                        } else {
-                            val sel = StringSelection("localhost:$port")
-                            Toolkit.getDefaultToolkit().systemClipboard.setContents(sel, sel)
-                            connectionManager.notifyUser("Remote Flow", "Address copied to clipboard: localhost:$port")
+                            } catch (_: Exception) {
+                                val sel = StringSelection("localhost:$port")
+                                Toolkit.getDefaultToolkit().systemClipboard.setContents(sel, sel)
+                                connectionManager.notifyUser("Remote Flow", "Address copied to clipboard: localhost:$port")
+                            }
                         }
                     }
                 }
@@ -1038,6 +1037,8 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         btnRun.parent?.repaint()
         btnDebug.parent?.revalidate()
         btnDebug.parent?.repaint()
+
+        updatePortsTableData()
     }
 
     private fun updatePortsTableData() {
@@ -1045,6 +1046,17 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         portsTableModel.rowCount = 0
         val isConn = connectionManager.isConnected
         val activeProfile = settings.activeProfile
+
+        val dynamicAppPort = connectionManager.activeAppPort
+        if (dynamicAppPort != null && isConn) {
+            val status = "● Active"
+            val directionText = "💻 Local ➔ 🌐 Host"
+            val localAddr = "localhost:$dynamicAppPort"
+            val remoteAddr = "remote:$dynamicAppPort"
+            val action = "http://localhost:$dynamicAppPort (App)"
+            portsTableModel.addRow(arrayOf(status, directionText, "🚀 Dynamic App ($dynamicAppPort)", localAddr, remoteAddr, action))
+        }
+
         for (p in activeProfile.forwardedPorts) {
             val status = if (isConn && p.isForwarded) "● Active" else if (isConn) "● Ready" else "○ Stopped"
             val directionText = if (p.direction == ForwardDirection.REMOTE_TO_LOCAL) "🌐 Host ➔ 💻 Local" else "💻 Local ➔ 🌐 Host"
@@ -1375,10 +1387,13 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     private fun pingApiHealth() {
         apiHealthLabel.text = "API: ..."
         val startTime = System.currentTimeMillis()
+        val activePort = connectionManager.activeAppPort
+            ?: uz.remote.flow.ssh.DynamicPortDetector.detectPortFromLocalConfig(project)
+            ?: 8080
 
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
-                val uri = URI.create("http://localhost:8080/actuator/health")
+                val uri = URI.create("http://localhost:$activePort/actuator/health")
                 val conn = uri.toURL().openConnection() as HttpURLConnection
                 conn.connectTimeout = 1500
                 conn.readTimeout = 1500
@@ -1392,7 +1407,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
                 }
             } catch (_: Exception) {
                 try {
-                    val rootUri = URI.create("http://localhost:8080")
+                    val rootUri = URI.create("http://localhost:$activePort")
                     val rootConn = rootUri.toURL().openConnection() as HttpURLConnection
                     rootConn.connectTimeout = 1500
                     rootConn.readTimeout = 1500

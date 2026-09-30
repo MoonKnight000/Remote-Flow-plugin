@@ -26,6 +26,7 @@ class RemoteFlowProcessHandler(
         notifyTextAvailable("[REMOTE FLOW] Stopping application on ${profile.name} via IDE controls...\n", ProcessOutputType.SYSTEM)
         logService.log("[REMOTE FLOW] Stopping application via IDE controls on ${profile.name}...\n", LogCategory.RUN, profile.name)
 
+        connMgr.stopAppPortForward()
         connMgr.stopRemoteProcess(
             profile = profile,
             onOutput = { text -> notifyTextAvailable(text, ProcessOutputType.STDOUT) },
