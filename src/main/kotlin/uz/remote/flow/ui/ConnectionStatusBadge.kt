@@ -9,6 +9,7 @@ class ConnectionStatusBadge : JPanel(FlowLayout(FlowLayout.CENTER, 6, 2)) {
 
     private val iconLabel = JLabel(RemoteFlowIcons.CLOUD_DISCONNECTED)
     private val textLabel = JLabel("Disconnected")
+    private val envLabel = JLabel("")
 
     init {
         isOpaque = true
@@ -21,11 +22,25 @@ class ConnectionStatusBadge : JPanel(FlowLayout(FlowLayout.CENTER, 6, 2)) {
         textLabel.font = textLabel.font.deriveFont(Font.BOLD, 11f)
         textLabel.foreground = JBColor.GRAY
 
+        envLabel.font = envLabel.font.deriveFont(Font.BOLD, 10f)
+        envLabel.isOpaque = true
+        envLabel.isVisible = false
+
         add(iconLabel)
         add(textLabel)
+        add(envLabel)
     }
 
-    fun updateStatus(connected: Boolean, serverInfo: String = "") {
+    fun updateStatus(connected: Boolean, serverInfo: String = "", environment: uz.remote.flow.ssh.ServerEnvironment? = null) {
+        if (environment != null) {
+            envLabel.text = " ${environment.displayName} "
+            envLabel.background = Color(environment.tagColorRgb)
+            envLabel.foreground = Color.WHITE
+            envLabel.border = BorderFactory.createEmptyBorder(1, 4, 1, 4)
+            envLabel.isVisible = true
+        } else {
+            envLabel.isVisible = false
+        }
         if (connected) {
             iconLabel.icon = RemoteFlowIcons.CLOUD_CONNECTED
             textLabel.text = "Connected"

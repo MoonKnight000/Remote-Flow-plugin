@@ -58,6 +58,10 @@ class ServerStatsManager(private val project: Project) {
             onComplete = { code ->
                 if (code == 0) {
                     val metrics = parseMetrics(fullOutput.toString())
+                    val profile = connectionManager.config.activeProfileOrNull
+                    if (profile != null) {
+                        ServerHealthAlertManager.checkAndAlert(project, profile, metrics)
+                    }
                     onParsed(metrics)
                     onComplete(true)
                 } else {

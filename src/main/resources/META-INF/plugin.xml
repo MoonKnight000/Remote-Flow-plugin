@@ -78,6 +78,8 @@
         <configurationType implementation="uz.remote.flow.run.RemoteFlowConfigurationType"/>
 
         <postStartupActivity implementation="uz.remote.flow.run.RemoteFlowStartupActivity"/>
+
+        <notificationGroup id="Remote Flow" displayType="BALLOON" isLogByDefault="true"/>
     </extensions>
 
     <projectListeners>
@@ -98,6 +100,16 @@
                     text="Fast Sync Project to Server"
                     description="Sync all project changes to active remote server">
                 <keyboard-shortcut keymap="$default" first-keystroke="alt shift U"/>
+            </action>
+            <action id="RemoteFlow.SyncPreviewAction"
+                    class="uz.remote.flow.actions.RemoteFlowSyncPreviewAction"
+                    text="Preview Sync Diff (Dry Run)..."
+                    description="Preview files that will be uploaded or deleted on remote server"/>
+            <action id="RemoteFlow.HotReloadAction"
+                    class="uz.remote.flow.actions.RemoteFlowHotReloadAction"
+                    text="Remote Hot Reload / Fast Recompile"
+                    description="Recompile and reload current class on remote server without full restart">
+                <keyboard-shortcut keymap="$default" first-keystroke="alt shift H"/>
             </action>
             <action id="RemoteFlow.RunAction"
                     class="uz.remote.flow.actions.RemoteFlowRunAction"
@@ -156,6 +168,10 @@
                     class="uz.remote.flow.actions.RemoteFlowSyncSelectionAction"
                     text="Sync Selected to Remote"
                     description="Sync selected file or folder to remote server"/>
+            <action id="RemoteFlow.ProjectViewSyncPreviewAction"
+                    class="uz.remote.flow.actions.RemoteFlowSyncPreviewAction"
+                    text="Preview Sync Diff..."
+                    description="Preview changes before uploading to remote server"/>
             <action id="RemoteFlow.ProjectViewTerminalAction"
                     class="uz.remote.flow.actions.RemoteFlowTerminalAction"
                     text="Open Remote Terminal"
@@ -165,6 +181,10 @@
         <!-- Context menu in Editor -->
         <group id="RemoteFlow.EditorGroup" text="Remote Flow" popup="true" icon="icons/remoteFlow.svg">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <action id="RemoteFlow.EditorHotReloadAction"
+                    class="uz.remote.flow.actions.RemoteFlowHotReloadAction"
+                    text="Hot Reload This File"
+                    description="Recompile and reload this class on remote server"/>
             <action id="RemoteFlow.EditorSyncAction"
                     class="uz.remote.flow.actions.RemoteFlowSyncSelectionAction"
                     text="Sync Current File to Remote"

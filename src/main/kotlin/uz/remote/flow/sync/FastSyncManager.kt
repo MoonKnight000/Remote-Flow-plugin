@@ -94,6 +94,107 @@ class FastSyncManager(private val project: Project) {
         }
     }
 
+    fun previewDryRunDiff(
+        profile: ServerProfile = connectionManager.config.activeProfile,
+        onLog: (String) -> Unit = {},
+        onResult: (List<SyncDiffItem>) -> Unit
+    ) {
+        val basePath = profile.localProjectPath.ifBlank { project.basePath ?: "" }
+        if (basePath.isBlank()) {
+            onLog("[ERROR] Local directory not found!\n")
+            onResult(emptyList())
+            return
+        }
+
+        parallelPool.submit {
+            val diffItems = mutableListOf<SyncDiffItem>()
+            var tempAskPass: java.io.File? = null
+            try {
+                val exe = resolveRsyncExecutable(profile)
+                val rsyncCmd = mutableListOf(exe)
+                val options = buildBaseRsyncOptions(profile)
+                if (!options.contains("--dry-run") && !options.contains("-n")) {
+                    options.add("-n")
+                }
+                if (!options.contains("--delete") && !options.contains("-delete")) {
+                    options.add("--delete")
+                }
+                if (!options.contains("--itemize-changes")) {
+                    options.add("--itemize-changes")
+                }
+                rsyncCmd.addAll(options)
+
+                val rsyncSource = convertToRsyncPath(basePath.trimEnd('/') + "/", exe)
+                val rsyncDest = "${profile.user}@${profile.host}:${profile.remoteProjectPath.trimEnd('/')}/"
+
+                val sshCmdStr = buildSshCommand(profile, exe)
+                rsyncCmd.addAll(listOf("-e", sshCmdStr, rsyncSource, rsyncDest))
+
+                if (profile.authType == uz.remote.flow.ssh.AuthType.PASSWORD && profile.password.isNotBlank()) {
+                    tempAskPass = java.io.File.createTempFile("rf_askpass_", ".bat")
+                    tempAskPass.writeText("@echo off\r\necho " + profile.password + "\r\n", Charsets.US_ASCII)
+                    tempAskPass.setExecutable(true)
+                }
+
+                val pb = ProcessBuilder(rsyncCmd).redirectErrorStream(true)
+                val exeFile = java.io.File(exe)
+                if (exeFile.parentFile != null) {
+                    val rsyncDir = exeFile.parentFile.absolutePath
+                    val currentPath = pb.environment()["PATH"] ?: ""
+                    pb.environment()["PATH"] = rsyncDir + java.io.File.pathSeparator + currentPath
+                }
+                if (tempAskPass != null) {
+                    pb.environment()["SSH_ASKPASS"] = tempAskPass.absolutePath
+                    pb.environment()["SSH_ASKPASS_REQUIRE"] = "force"
+                    pb.environment()["DISPLAY"] = "dummy:0"
+                }
+
+                val process = pb.start()
+                process.inputStream.bufferedReader().useLines { lines ->
+                    lines.forEach { rawLine ->
+                        val line = rawLine.trim()
+                        onLog(line + "\n")
+                        if (line.startsWith("*deleting")) {
+                            val path = line.removePrefix("*deleting").trim()
+                            if (path.isNotBlank()) {
+                                diffItems.add(SyncDiffItem(path, SyncChangeType.DELETED))
+                            }
+                        } else if (line.matches(Regex("""^[>cf.shdLitpoguax+?]{9,11}\s+.*"""))) {
+                            val parts = line.split("\\s+".toRegex(), limit = 2)
+                            if (parts.size >= 2) {
+                                val flags = parts[0]
+                                val path = parts[1].trim()
+                                if (path.isNotBlank()) {
+                                    val isNew = flags.contains("+++++") || flags.startsWith(">f+") || flags.startsWith("cd+")
+                                    val changeType = if (isNew) SyncChangeType.ADDED else SyncChangeType.MODIFIED
+                                    diffItems.add(SyncDiffItem(path, changeType))
+                                }
+                            }
+                        }
+                    }
+                }
+                process.waitFor()
+            } catch (e: Exception) {
+                onLog("[DRY-RUN NOTE]: Rsync dry-run fallback: ${e.message}\n")
+                try {
+                    val excludes = uz.remote.flow.ssh.parseExcludeList(profile.excludePatterns)
+                    val baseDir = java.io.File(basePath)
+                    baseDir.walkTopDown().forEach { file ->
+                        if (file.isFile) {
+                            val rel = file.relativeTo(baseDir).path.replace('\\', '/')
+                            if (!uz.remote.flow.ssh.isPathExcluded(rel, file.name, excludes)) {
+                                diffItems.add(SyncDiffItem(rel, SyncChangeType.MODIFIED))
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            } finally {
+                try { tempAskPass?.delete() } catch (_: Exception) {}
+            }
+            onResult(diffItems)
+        }
+    }
+
     fun syncSingleServer(
         profile: ServerProfile = connectionManager.config.activeProfile,
         onLog: (String) -> Unit,
@@ -223,8 +324,8 @@ class FastSyncManager(private val project: Project) {
         profile: ServerProfile = connectionManager.config.activeProfile,
         relativePath: String,
         isAutoSync: Boolean = false,
-        onLog: (String) -> Unit,
-        onComplete: (Boolean) -> Unit
+        onLog: (String) -> Unit = {},
+        onComplete: (Boolean) -> Unit = {}
     ) {
         val basePath = profile.localProjectPath.ifBlank { project.basePath ?: "" }
         val prefix = if (isAutoSync) "AUTO-SYNC" else "SYNC SPECIFIC"

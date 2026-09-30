@@ -298,7 +298,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
     private fun updateConnectionStateUi(connected: Boolean) {
         val p = settings.activeProfile
-        connectionBadge.updateStatus(connected, p.name)
+        connectionBadge.updateStatus(connected, p.name, p.environment)
         if (connected) {
             btnConnectToggle.text = "Disconnect"
             btnConnectToggle.icon = AllIcons.Actions.Suspend
@@ -440,11 +440,18 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         quickActionGrid.add(btnQuickSync)
 
         val btnDryRun = JButton("Preview Diff", AllIcons.Actions.Diff)
-        btnDryRun.toolTipText = "Compare with remote server (Dry-Run Diff)"
+        btnDryRun.toolTipText = "Compare with remote server and preview changed files before syncing"
         btnDryRun.addActionListener {
-            syncManager.previewDryRun(settings.activeProfile, { log(it) }, {})
+            uz.remote.flow.actions.RemoteFlowSyncPreviewAction.openPreviewDialog(project)
         }
         quickActionGrid.add(btnDryRun)
+
+        val btnHotReload = JButton("Hot Reload", AllIcons.Actions.Compile)
+        btnHotReload.toolTipText = "Fast recompile and reload current class on remote server (Alt+Shift+H)"
+        btnHotReload.addActionListener {
+            uz.remote.flow.reload.RemoteHotReloadManager.hotReloadCurrentFile(project)
+        }
+        quickActionGrid.add(btnHotReload)
 
         val btnSyncAll = JButton("Sync All Servers", AllIcons.Actions.Commit)
         btnSyncAll.toolTipText = "Synchronize all servers in parallel"
@@ -545,6 +552,13 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         btnStop.foreground = JBColor.RED
         btnStop.addActionListener { executeRemoteStop() }
         runBtnRow.add(btnStop)
+
+        val btnHotReloadInTab = JButton("⚡ Hot Reload", AllIcons.Actions.Compile)
+        btnHotReloadInTab.toolTipText = "Recompile and reload current class on remote server without restart (Alt+Shift+H)"
+        btnHotReloadInTab.addActionListener {
+            uz.remote.flow.reload.RemoteHotReloadManager.hotReloadCurrentFile(project)
+        }
+        runBtnRow.add(btnHotReloadInTab)
 
         gbc.gridx = 0; gbc.gridy = 1; gbc.gridwidth = 2; gbc.weightx = 1.0
         runCard.add(runBtnRow, gbc)
@@ -878,6 +892,10 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         }
 
         val p = settings.activeProfile
+        if (!uz.remote.flow.ssh.RemoteSafetyHelper.checkProductionSafe(project, p, "Remote Run")) {
+            return
+        }
+
         p.runCommand = runCommandField.text.trim()
         val rawCmd = p.runCommand
         val cmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(rawCmd, p.javaHome)
@@ -904,7 +922,15 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
                             if (!readyNotified.get() && (line.contains("Tomcat started on port(s):") || line.contains("Netty started on port") || (line.contains("Started ") && line.contains(" in ") && line.contains("seconds")))) {
                                 readyNotified.set(true)
                                 val httpPort = p.forwardedPorts.firstOrNull { fp -> fp.direction == ForwardDirection.LOCAL_TO_REMOTE }?.localPort ?: 8080
-                                log("[APP READY] 🚀 Application is ready! Accessible locally at: http://localhost:$httpPort\n")
+                                val targetUrl = if (p.browserUrl.isNotBlank()) p.browserUrl else "http://localhost:$httpPort"
+                                log("[APP READY] 🚀 Application is ready! Accessible locally at: $targetUrl\n")
+                                if (p.openBrowserOnReady) {
+                                    ApplicationManager.getApplication().invokeLater {
+                                        try {
+                                            com.intellij.ide.BrowserUtil.browse(targetUrl)
+                                        } catch (_: Throwable) {}
+                                    }
+                                }
                             }
                         },
                         onComplete = { code ->
@@ -935,6 +961,10 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         }
 
         val p = settings.activeProfile
+        if (!uz.remote.flow.ssh.RemoteSafetyHelper.checkProductionSafe(project, p, "Remote Debug")) {
+            return
+        }
+
         p.debugCommand = debugCommandField.text.trim()
         val rawCmd = p.debugCommand
         val cmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(rawCmd, p.javaHome)
@@ -987,10 +1017,15 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     }
 
     private fun executeRemoteStop() {
+        val p = settings.activeProfile
+        if (!uz.remote.flow.ssh.RemoteSafetyHelper.checkProductionSafe(project, p, "Stop Remote Application")) {
+            return
+        }
+
         logService.showLogWindow()
         log("[STOPPING] Stopping remote application...\n")
         connectionManager.stopRemoteProcess(
-            profile = settings.activeProfile,
+            profile = p,
             onOutput = { log(it) },
             onComplete = {
                 log("[STOPPED] Application stopped.\n")
@@ -1297,6 +1332,9 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         if (p == null || p.host.isBlank()) {
             log("[WARNING] No server profile found! Please add a server in settings first.\n", true)
             ShowSettingsUtil.getInstance().showSettingsDialog(project, RemoteFlowConfigurable::class.java)
+            return
+        }
+        if (!uz.remote.flow.ssh.RemoteSafetyHelper.checkProductionSafe(project, p, "Sync Project Files")) {
             return
         }
         syncManager.syncSingleServer(

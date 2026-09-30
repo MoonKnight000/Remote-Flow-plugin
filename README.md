@@ -58,14 +58,29 @@ Traditional remote development solutions (such as JetBrains Gateway or headless 
 - **Remote File Browser**: Navigate remote server directory trees, view file sizes and permissions, create directories, upload local files, and inspect files remotely.
 - **Remote Config Editor**: Safely view and edit remote `.env`, `application.yml`, and `application.properties` files directly from IntelliJ with automatic backup creation (`.bak`) before saving.
 
-### 7. Unified Log Tool Window & Embedded Terminal
+### 7. Java / Kotlin Hot Reload & Fast Class Swap (`Alt + Shift + H`)
+- **Sub-Second Code Reload**: Recompiles the current Java/Kotlin class locally and syncs bytecode directly to the remote server without restarting the application.
+- **JVM Debugger HotSwap & DevTools Support**: Automatically triggers IntelliJ's native JVM HotSwap when debugging on port 5005, or triggers Spring Boot DevTools restart in < 1 second.
+
+### 8. Sync Diff & Dry-Run Preview
+- **Interactive Diff Viewer**: Preview all modified, added, and deleted files in a dedicated dialog before uploading.
+- **Visual Status Badges**: Filter by `Added`, `Modified`, or `Deleted` files with instant search and one-click "🚀 Sync Now".
+
+### 9. Server Health Alerts & Balloon Notifications
+- **Proactive Resource Warnings**: Automatic balloon notifications when remote server **RAM >= 90%**, **CPU >= 90%**, or **Disk >= 95%** to prevent unexpected OOM crashes.
+- **Smart Cooldown**: Intelligent debouncing avoids notification spam while keeping you alerted to critical bottlenecks.
+
+### 10. Server Environments & Production Safety Protection
+- **Color-Coded Badges**: Tag profiles as `DEV` (green), `STAGING` (amber), or `PROD` (red) visible across status bar and tool window.
+- **Accidental Execution Guard**: Explicit confirmation dialogs before running, stopping, or syncing files on live `PRODUCTION` servers.
+
+### 11. Execution Hooks & Auto-Open Browser
+- **Pre-Run & Post-Run Hooks**: Execute custom bash commands on the server before building (e.g. `npm run build`, `./mvnw compile`) or when ready.
+- **Auto-Open Browser**: Automatically launches your default browser to `http://localhost:8080` as soon as Spring Boot or Netty completes startup.
+
+### 12. Unified Log Tool Window & Embedded Terminal
 - **Colorized ANSI Console**: Dedicated "Remote Flow Log" tool window at the bottom of the IDE with real-time log streaming, ANSI color support, search filtering, log level categories (`ALL`, `RUN`, `SYNC`, `SSH`, `SYSTEM`), pause, and log export.
 - **Integrated SSH Terminal**: Open interactive SSH terminal sessions to the active server directly inside IntelliJ with a single click.
-
-### 8. Multi-Server Profiles & Keep-Alive Watchdog
-- Manage multiple environments (e.g. `Dev`, `Staging`, `Cloud Server`).
-- Supports both **Password** and **SSH Private Key** (`.pem`, `id_rsa`) authentication.
-- Automatic keep-alive heartbeat with seamless auto-reconnection in case of transient network dropouts.
 
 ---
 
@@ -75,6 +90,7 @@ Traditional remote development solutions (such as JetBrains Gateway or headless 
 | :--- | :--- | :--- |
 | `Alt + Shift + R` | **Remote Run** | Sync differential changes, build, and run application on active remote server |
 | `Alt + Shift + D` | **Remote Debug** | Run on remote server with JVM debug mode on port `5005` and auto-attach |
+| `Alt + Shift + H` | **Hot Reload** | Recompile and reload current class on remote server in < 1s without restart |
 | `Alt + Shift + S` | **Remote Stop** | Terminate running remote application process |
 | `Alt + Shift + U` | **Fast Sync** | Synchronize all project files to the active remote server |
 | `Alt + Shift + L` | **Show Logs** | Focus and open the unified Remote Flow Log console |

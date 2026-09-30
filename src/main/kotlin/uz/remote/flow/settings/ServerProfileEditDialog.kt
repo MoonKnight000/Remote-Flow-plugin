@@ -54,6 +54,15 @@ class ServerProfileEditDialog(
     private val runCommandField = JBTextField(profile.runCommand)
     private val debugCommandField = JBTextField(profile.debugCommand)
 
+    private val envBox = JComboBox(arrayOf("DEV (Development)", "STAGING (Pre-production)", "PRODUCTION (Live Protected)"))
+    private val chkConfirmProduction = com.intellij.ui.components.JBCheckBox("⚠️ Confirm all destructive actions on Production (Run, Stop, Sync)", profile.confirmOnProduction)
+
+    private val chkOpenBrowser = com.intellij.ui.components.JBCheckBox("🌐 Auto-open browser when application is ready", profile.openBrowserOnReady)
+    private val browserUrlField = JBTextField(profile.browserUrl)
+
+    private val preRunCommandField = JBTextField(profile.preRunCommand)
+    private val postRunCommandField = JBTextField(profile.postRunCommand)
+
     private val chkAutoSyncOnSave = com.intellij.ui.components.JBCheckBox("⚡ Auto-Sync on Save (automatically upload files on save)", profile.autoSyncOnSave)
     private val btnTestConn = JButton("Test Connection", AllIcons.Actions.Execute)
 
@@ -116,6 +125,17 @@ class ServerProfileEditDialog(
         rsyncPathField.text = profile.rsyncPath
         javaHomeField.text = profile.javaHome
         chkAutoSyncOnSave.isSelected = profile.autoSyncOnSave
+
+        envBox.selectedIndex = when (profile.environment) {
+            uz.remote.flow.ssh.ServerEnvironment.DEV -> 0
+            uz.remote.flow.ssh.ServerEnvironment.STAGING -> 1
+            uz.remote.flow.ssh.ServerEnvironment.PRODUCTION -> 2
+        }
+        chkConfirmProduction.isSelected = profile.confirmOnProduction
+        chkOpenBrowser.isSelected = profile.openBrowserOnReady
+        browserUrlField.text = profile.browserUrl.ifBlank { "http://localhost:8080" }
+        preRunCommandField.text = profile.preRunCommand
+        postRunCommandField.text = profile.postRunCommand
     }
 
     override fun createCenterPanel(): JComponent {
@@ -252,10 +272,11 @@ class ServerProfileEditDialog(
         gbc.anchor = GridBagConstraints.WEST
         gbc.fill = GridBagConstraints.HORIZONTAL
 
-        // Row 0: Name
+        // Row 0: Name & Environment
         gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.0; form.add(JBLabel("Profile Name:"), gbc)
-        gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(nameField, gbc)
-        gbc.gridwidth = 1
+        gbc.gridx = 1; gbc.weightx = 0.6; form.add(nameField, gbc)
+        gbc.gridx = 2; gbc.weightx = 0.0; form.add(JBLabel("Environment:"), gbc)
+        gbc.gridx = 3; gbc.weightx = 0.4; form.add(envBox, gbc)
 
         // Row 1: Host & Port
         gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.0; form.add(JBLabel("Host IP:"), gbc)
@@ -376,12 +397,36 @@ class ServerProfileEditDialog(
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(debugCommandField, gbc)
         gbc.gridwidth = 1
 
-        // Row 12: Auto-Sync on Save
-        gbc.gridx = 0; gbc.gridy = 12; gbc.gridwidth = 4; gbc.weightx = 1.0
-        form.add(chkAutoSyncOnSave, gbc)
+        // Row 12: Pre-Run Hook
+        gbc.gridx = 0; gbc.gridy = 12; gbc.weightx = 0.0; form.add(JBLabel("Pre-Run Hook:"), gbc)
+        preRunCommandField.emptyText.text = "Optional bash command before build (e.g., npm run build, ./mvnw compile)"
+        gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(preRunCommandField, gbc)
+        gbc.gridwidth = 1
 
-        // Row 13: Test Button
-        gbc.gridx = 0; gbc.gridy = 13; gbc.gridwidth = 4; gbc.weightx = 1.0
+        // Row 13: Post-Run Hook
+        gbc.gridx = 0; gbc.gridy = 13; gbc.weightx = 0.0; form.add(JBLabel("Post-Run Hook:"), gbc)
+        postRunCommandField.emptyText.text = "Optional bash command when app becomes ready"
+        gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(postRunCommandField, gbc)
+        gbc.gridwidth = 1
+
+        // Row 14: Browser Auto-Open
+        gbc.gridx = 0; gbc.gridy = 14; gbc.weightx = 0.0; form.add(chkOpenBrowser, gbc)
+        val browserPanel = JPanel(BorderLayout(4, 0))
+        browserUrlField.emptyText.text = "http://localhost:8080"
+        browserPanel.add(JBLabel("URL: "), BorderLayout.WEST)
+        browserPanel.add(browserUrlField, BorderLayout.CENTER)
+        gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(browserPanel, gbc)
+        gbc.gridwidth = 1
+
+        // Row 15: Production Safety & Auto-Sync
+        gbc.gridx = 0; gbc.gridy = 15; gbc.gridwidth = 4; gbc.weightx = 1.0
+        val flagsPanel = JPanel(GridLayout(2, 1, 0, 2))
+        flagsPanel.add(chkConfirmProduction)
+        flagsPanel.add(chkAutoSyncOnSave)
+        form.add(flagsPanel, gbc)
+
+        // Row 16: Test Button
+        gbc.gridx = 0; gbc.gridy = 16; gbc.gridwidth = 4; gbc.weightx = 1.0
         val btnP = JPanel(FlowLayout(FlowLayout.LEFT, 0, 4))
         btnP.add(btnTestConn)
         form.add(btnP, gbc)
@@ -406,6 +451,17 @@ class ServerProfileEditDialog(
         p.runCommand = runCommandField.text.trim()
         p.debugCommand = debugCommandField.text.trim()
         p.autoSyncOnSave = chkAutoSyncOnSave.isSelected
+
+        p.environment = when (envBox.selectedIndex) {
+            1 -> uz.remote.flow.ssh.ServerEnvironment.STAGING
+            2 -> uz.remote.flow.ssh.ServerEnvironment.PRODUCTION
+            else -> uz.remote.flow.ssh.ServerEnvironment.DEV
+        }
+        p.confirmOnProduction = chkConfirmProduction.isSelected
+        p.openBrowserOnReady = chkOpenBrowser.isSelected
+        p.browserUrl = browserUrlField.text.trim().ifBlank { "http://localhost:8080" }
+        p.preRunCommand = preRunCommandField.text.trim()
+        p.postRunCommand = postRunCommandField.text.trim()
     }
 
     override fun doOKAction() {

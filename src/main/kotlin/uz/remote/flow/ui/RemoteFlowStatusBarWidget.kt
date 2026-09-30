@@ -180,24 +180,30 @@ class RemoteFlowStatusBarWidget(private val project: Project) : CustomStatusBarW
                 " | CPU: ${m.cpuPercent}% | RAM: ${m.ramPercent}%"
             } else ""
 
+            val isCritical = uz.remote.flow.system.ServerHealthAlertManager.isCritical(m)
+            val alertPrefix = if (isCritical) "⚠️ " else ""
+            val envBadge = "[${active.environment.displayName}]"
+
             val metricsTip = if (m != null) "CPU: ${m.cpuText} | RAM: ${m.ramText} (${m.ramPercent}%) | Disk: ${m.diskText}\n" else ""
+            val alertTip = uz.remote.flow.system.ServerHealthAlertManager.getAlertSummary(m)?.let { "$it\n" } ?: ""
 
             if (connMgr.isProcessRunning) {
-                textLabel.text = "${active.name} [Running]$statsInfo"
-                textLabel.foreground = JBColor(Color(13, 148, 136), Color(52, 211, 153)) // Vivid Emerald Green
-                panel.toolTipText = "Remote Flow: Application is running on ${active.name}\n" +
+                textLabel.text = "$alertPrefix$envBadge ${active.name} [Running]$statsInfo"
+                textLabel.foreground = if (isCritical) JBColor(Color(239, 68, 68), Color(248, 113, 113)) else JBColor(Color(13, 148, 136), Color(52, 211, 153))
+                panel.toolTipText = alertTip + "Remote Flow: Application is running on ${active.name}\n" +
                         metricsTip +
                         "Click for quick actions (Stop, Terminal, Logs)."
             } else {
-                textLabel.text = "${active.name} [Connected]$statsInfo"
-                textLabel.foreground = JBColor(Color(16, 185, 129), Color(16, 185, 129))
-                panel.toolTipText = "Remote Flow: Connected to ${active.name} (${active.host}:${active.port})\n" +
+                textLabel.text = "$alertPrefix$envBadge ${active.name} [Connected]$statsInfo"
+                textLabel.foreground = if (isCritical) JBColor(Color(239, 68, 68), Color(248, 113, 113)) else JBColor(Color(16, 185, 129), Color(16, 185, 129))
+                panel.toolTipText = alertTip + "Remote Flow: Connected to ${active.name} (${active.host}:${active.port})\n" +
                         metricsTip +
                         "Click for quick actions (Run, Debug, Sync)."
             }
         } else {
             iconLabel.icon = RemoteFlowIcons.CLOUD_DISCONNECTED
-            textLabel.text = "${active.name} [Offline]"
+            val envBadge = "[${active.environment.displayName}]"
+            textLabel.text = "$envBadge ${active.name} [Offline]"
             textLabel.foreground = JBColor.GRAY
             panel.toolTipText = "Remote Flow: Disconnected (${active.name}). Click to connect or switch server."
         }
@@ -249,6 +255,12 @@ class RemoteFlowStatusBarWidget(private val project: Project) : CustomStatusBarW
                     })
                 }
 
+                group.add(object : AnAction("⚡ Hot Reload Current File (Alt+Shift+H)", "Fast recompile and reload class on server without restart", com.intellij.icons.AllIcons.Actions.Compile) {
+                    override fun actionPerformed(e: AnActionEvent) {
+                        uz.remote.flow.reload.RemoteHotReloadManager.hotReloadCurrentFile(project)
+                    }
+                })
+
                 val isMonitoring = active.monitorMode != "OFF"
                 if (isMonitoring) {
                     latestMetrics?.let { m ->
@@ -295,8 +307,17 @@ class RemoteFlowStatusBarWidget(private val project: Project) : CustomStatusBarW
                 }
             })
 
+            group.add(Separator.create("Code Synchronization"))
+            group.add(object : AnAction("🔍 Preview Sync Diff (Dry Run)...", "Review changed files before uploading", com.intellij.icons.AllIcons.Actions.Diff) {
+                override fun actionPerformed(e: AnActionEvent) {
+                    uz.remote.flow.actions.RemoteFlowSyncPreviewAction.openPreviewDialog(project)
+                }
+            })
             group.add(object : AnAction("🔄 Fast Sync All Files") {
                 override fun actionPerformed(e: AnActionEvent) {
+                    if (!uz.remote.flow.ssh.RemoteSafetyHelper.checkProductionSafe(project, active, "Full Project Sync")) {
+                        return
+                    }
                     syncMgr.syncSingleServer(active, {}, { ok ->
                         if (ok) connMgr.notifyUser("Remote Flow", "Fast Sync completed!")
                     })

@@ -17,6 +17,12 @@ enum class ForwardDirection {
     REMOTE_TO_LOCAL  // Host -> Local (ssh -R)
 }
 
+enum class ServerEnvironment(val displayName: String, val tagColorRgb: Int) {
+    DEV("DEV", 0x22C55E),
+    STAGING("STAGING", 0xF59E0B),
+    PRODUCTION("PROD", 0xEF4444)
+}
+
 data class PortMapping(
     var localPort: Int = 8080,
     var remotePort: Int = 8080,
@@ -45,6 +51,12 @@ data class ServerProfile(
     var rsyncPath: String = "",
     var monitorMode: String = "REALTIME",
     var autoSyncOnSave: Boolean = false,
+    var environment: ServerEnvironment = ServerEnvironment.DEV,
+    var confirmOnProduction: Boolean = true,
+    var openBrowserOnReady: Boolean = true,
+    var browserUrl: String = "http://localhost:8080",
+    var preRunCommand: String = "",
+    var postRunCommand: String = "",
     var forwardedPorts: MutableList<PortMapping> = defaultPorts()
 ) {
     override fun toString(): String = name + " (" + host + ")"
@@ -70,6 +82,12 @@ data class ServerProfile(
             rsyncPath = rsyncPath,
             monitorMode = monitorMode,
             autoSyncOnSave = autoSyncOnSave,
+            environment = environment,
+            confirmOnProduction = confirmOnProduction,
+            openBrowserOnReady = openBrowserOnReady,
+            browserUrl = browserUrl,
+            preRunCommand = preRunCommand,
+            postRunCommand = postRunCommand,
             forwardedPorts = forwardedPorts.map { it.copy() }.toMutableList()
         )
     }

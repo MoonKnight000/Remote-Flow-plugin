@@ -5,6 +5,7 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindowManager
@@ -64,6 +65,10 @@ class RemoteFlowSyncAction : AnAction("Sync Project to Remote", "Upload project 
         val connMgr = RemoteConnectionManager.getInstance(project)
         val settings = RemoteFlowSettings.getInstance(project)
         val p = settings.activeProfile
+
+        if (!uz.remote.flow.ssh.RemoteSafetyHelper.checkProductionSafe(project, p, "Sync Project Files")) {
+            return
+        }
 
         connMgr.notifyUser("Remote Flow: Sync", "Uploading project files to ${p.name}...")
         syncMgr.syncSingleServer(
@@ -184,6 +189,10 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
                 return
             }
 
+            if (!uz.remote.flow.ssh.RemoteSafetyHelper.checkProductionSafe(project, p, "Remote Run")) {
+                return
+            }
+
             val logService = uz.remote.flow.logging.RemoteFlowLogService.getInstance(project)
             logService.showLogWindow()
 
@@ -221,7 +230,20 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
                             if (!readyNotified.get() && (line.contains("Tomcat started on port(s):") || line.contains("Netty started on port") || (line.contains("Started ") && line.contains(" in ") && line.contains("seconds")))) {
                                 readyNotified.set(true)
                                 val httpPort = p.forwardedPorts.firstOrNull { fp -> fp.direction == uz.remote.flow.ssh.ForwardDirection.LOCAL_TO_REMOTE }?.localPort ?: 8080
-                                logService.log("[APP READY] 🚀 Application is ready! Accessible locally at: http://localhost:$httpPort\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                                val targetUrl = if (p.browserUrl.isNotBlank()) p.browserUrl else "http://localhost:$httpPort"
+                                logService.log("[APP READY] 🚀 Application is ready! Accessible locally at: $targetUrl\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                                if (p.openBrowserOnReady) {
+                                    ApplicationManager.getApplication().invokeLater {
+                                        try {
+                                            com.intellij.ide.BrowserUtil.browse(targetUrl)
+                                        } catch (_: Throwable) {}
+                                    }
+                                }
+                                if (p.postRunCommand.isNotBlank()) {
+                                    logService.log("[POST-RUN HOOK] Running post-run hook: ${p.postRunCommand}\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                                    val postCmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(p.postRunCommand, p.javaHome)
+                                    connMgr.executeRemoteCommand(postCmd, workingDir, false, { logService.log(it, uz.remote.flow.logging.LogCategory.RUN, p.name) }, {})
+                                }
                             }
                         },
                         onComplete = { code ->
@@ -229,6 +251,29 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
                             connMgr.notifyUser("Remote Flow: Execution Finished", "Application completed on server ${p.name} (Exit code: $code)", NotificationType.INFORMATION)
                         }
                     )
+                }
+
+                val runWithPreHook = {
+                    if (p.preRunCommand.isNotBlank()) {
+                        logService.log("[PRE-RUN HOOK] Executing pre-run hook on ${p.name}: ${p.preRunCommand}\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                        val preCmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(p.preRunCommand, p.javaHome)
+                        connMgr.executeRemoteCommand(
+                            cmd = preCmd,
+                            workingDir = workingDir,
+                            isLongRunning = false,
+                            onOutput = { logService.log(it, uz.remote.flow.logging.LogCategory.RUN, p.name) },
+                            onComplete = { code ->
+                                if (code == 0) {
+                                    logService.log("[PRE-RUN HOOK] Completed successfully.\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                                } else {
+                                    logService.log("[PRE-RUN HOOK WARNING] Finished with exit code $code, proceeding with run...\n", uz.remote.flow.logging.LogCategory.RUN, p.name, true)
+                                }
+                                executeCmd()
+                            }
+                        )
+                    } else {
+                        executeCmd()
+                    }
                 }
 
                 if (shouldSync) {
@@ -240,12 +285,12 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
                             if (!success) {
                                 logService.log("[REMOTE RUN WARNING] Sync warning occurred, proceeding with command...\n", uz.remote.flow.logging.LogCategory.RUN, p.name, true)
                             }
-                            executeCmd()
+                            runWithPreHook()
                         }
                     )
                 } else {
                     logService.log("[REMOTE RUN] Skipping code sync (disabled in configuration)...\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
-                    executeCmd()
+                    runWithPreHook()
                 }
             }
 
@@ -325,6 +370,10 @@ class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in 
                 return
             }
 
+            if (!uz.remote.flow.ssh.RemoteSafetyHelper.checkProductionSafe(project, p, "Remote Debug")) {
+                return
+            }
+
             val logService = uz.remote.flow.logging.RemoteFlowLogService.getInstance(project)
             logService.showLogWindow()
 
@@ -355,6 +404,7 @@ class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in 
                     logService.log("[REMOTE DEBUG] Launching application in debug mode (port 5005) on server$javaInfo: $rawCmd\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
 
                     val debuggerAttached = java.util.concurrent.atomic.AtomicBoolean(false)
+                    val readyNotified = java.util.concurrent.atomic.AtomicBoolean(false)
                     connMgr.executeRemoteCommand(
                         cmd = cmd,
                         workingDir = workingDir,
@@ -364,6 +414,24 @@ class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in 
                             if (!debuggerAttached.get() && (line.contains("Listening for transport dt_socket at address:") || line.contains("dt_socket") || line.contains("5005"))) {
                                 if (debuggerAttached.compareAndSet(false, true)) {
                                     uz.remote.flow.debug.RemoteDebugHelper.attachRemoteDebugger(project, "localhost", 5005, p.name)
+                                }
+                            }
+                            if (!readyNotified.get() && (line.contains("Tomcat started on port(s):") || line.contains("Netty started on port") || (line.contains("Started ") && line.contains(" in ") && line.contains("seconds")))) {
+                                readyNotified.set(true)
+                                val httpPort = p.forwardedPorts.firstOrNull { fp -> fp.direction == uz.remote.flow.ssh.ForwardDirection.LOCAL_TO_REMOTE }?.localPort ?: 8080
+                                val targetUrl = if (p.browserUrl.isNotBlank()) p.browserUrl else "http://localhost:$httpPort"
+                                logService.log("[APP READY] 🚀 Application is ready! Accessible locally at: $targetUrl\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                                if (p.openBrowserOnReady) {
+                                    ApplicationManager.getApplication().invokeLater {
+                                        try {
+                                            com.intellij.ide.BrowserUtil.browse(targetUrl)
+                                        } catch (_: Throwable) {}
+                                    }
+                                }
+                                if (p.postRunCommand.isNotBlank()) {
+                                    logService.log("[POST-RUN HOOK] Running post-run hook: ${p.postRunCommand}\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                                    val postCmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(p.postRunCommand, p.javaHome)
+                                    connMgr.executeRemoteCommand(postCmd, workingDir, false, { logService.log(it, uz.remote.flow.logging.LogCategory.RUN, p.name) }, {})
                                 }
                             }
                         },
@@ -380,18 +448,41 @@ class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in 
                     }, 3500, java.util.concurrent.TimeUnit.MILLISECONDS)
                 }
 
+                val runWithPreHook = {
+                    if (p.preRunCommand.isNotBlank()) {
+                        logService.log("[PRE-RUN HOOK] Executing pre-run hook on ${p.name}: ${p.preRunCommand}\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                        val preCmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(p.preRunCommand, p.javaHome)
+                        connMgr.executeRemoteCommand(
+                            cmd = preCmd,
+                            workingDir = workingDir,
+                            isLongRunning = false,
+                            onOutput = { logService.log(it, uz.remote.flow.logging.LogCategory.RUN, p.name) },
+                            onComplete = { code ->
+                                if (code == 0) {
+                                    logService.log("[PRE-RUN HOOK] Completed successfully.\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
+                                } else {
+                                    logService.log("[PRE-RUN HOOK WARNING] Finished with exit code $code, proceeding with debug...\n", uz.remote.flow.logging.LogCategory.RUN, p.name, true)
+                                }
+                                executeCmd()
+                            }
+                        )
+                    } else {
+                        executeCmd()
+                    }
+                }
+
                 if (shouldSync) {
                     logService.log("[REMOTE DEBUG] 1. Syncing code to remote server ${p.name}...\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
                     syncMgr.syncSingleServer(
                         profile = p,
                         onLog = { logService.log(it, uz.remote.flow.logging.LogCategory.SYNC, p.name) },
                         onComplete = { _ ->
-                            executeCmd()
+                            runWithPreHook()
                         }
                     )
                 } else {
                     logService.log("[REMOTE DEBUG] Skipping code sync (disabled in configuration)...\n", uz.remote.flow.logging.LogCategory.RUN, p.name)
-                    executeCmd()
+                    runWithPreHook()
                 }
             }
 
@@ -462,6 +553,10 @@ class RemoteFlowStopAction : AnAction("Remote Stop", "Stop running application o
             val settings = RemoteFlowSettings.getInstance(project)
             val p = settings.activeProfileOrNull
             if (p == null || p.host.isBlank()) return
+
+            if (!uz.remote.flow.ssh.RemoteSafetyHelper.checkProductionSafe(project, p, "Stop Remote Application")) {
+                return
+            }
 
             val logService = uz.remote.flow.logging.RemoteFlowLogService.getInstance(project)
             logService.showLogWindow()
