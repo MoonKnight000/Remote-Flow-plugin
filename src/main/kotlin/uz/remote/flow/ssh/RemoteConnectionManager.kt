@@ -497,13 +497,14 @@ class RemoteConnectionManager(private val project: Project) {
                 return@submit
             }
 
+            var session: net.schmizz.sshj.connection.channel.direct.Session? = null
             try {
                 val fullCmd = if (workingDir.isNotBlank()) "cd \"$workingDir\" && $cmd" else cmd
-                val session = client.startSession()
-                session.allocateDefaultPTY()
-                val command = session.exec(fullCmd)
+                session = client.startSession()
 
                 if (isLongRunning) {
+                    session.allocateDefaultPTY()
+                    val command = session.exec(fullCmd)
                     isProcessRunning = true
                     runningCommand = cmd
                     activeSession = session
@@ -512,30 +513,73 @@ class RemoteConnectionManager(private val project: Project) {
                     try {
                         project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).processStateChanged(true, cmd)
                     } catch (_: Exception) {}
-                }
 
-                BufferedReader(InputStreamReader(command.inputStream, java.nio.charset.StandardCharsets.UTF_8)).use { reader ->
-                    var line: String?
-                    while (reader.readLine().also { line = it } != null) {
-                        val raw = line ?: ""
-                        val parts = raw.split('\r')
-                        for (part in parts) {
-                            val cleaned = cleanProgressRemnants(part)
-                            if (cleaned.isNotBlank()) {
-                                onOutput(cleaned + "\n")
+                    BufferedReader(InputStreamReader(command.inputStream, java.nio.charset.StandardCharsets.UTF_8)).use { reader ->
+                        var line: String?
+                        while (reader.readLine().also { line = it } != null) {
+                            val raw = line ?: ""
+                            val parts = raw.split('\r')
+                            for (part in parts) {
+                                val cleaned = cleanProgressRemnants(part)
+                                if (cleaned.isNotBlank()) {
+                                    onOutput(cleaned + "\n")
+                                }
                             }
                         }
                     }
-                }
 
-                command.join()
-                val exitStatus = command.exitStatus ?: 0
-                try { session.close() } catch (_: Exception) {}
-                onComplete(exitStatus)
+                    command.join()
+                    val exitStatus = command.exitStatus ?: 0
+                    onComplete(exitStatus)
+                } else {
+                    // Non-interactive short command: DO NOT allocate PTY!
+                    val command = session.exec(fullCmd)
+
+                    // Immediately close remote stdin so commands reading standard input don't block
+                    try { command.outputStream.close() } catch (_: Exception) {}
+
+                    // Drain stderr in background to prevent SSH buffer deadlock
+                    val errFuture = executor.submit {
+                        try {
+                            BufferedReader(InputStreamReader(command.errorStream, java.nio.charset.StandardCharsets.UTF_8)).use { errReader ->
+                                var errLine: String?
+                                while (errReader.readLine().also { errLine = it } != null) {
+                                    val text = errLine?.trim() ?: ""
+                                    if (text.isNotBlank()) {
+                                        onOutput(text + "\n")
+                                    }
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+
+                    // Read stdout
+                    BufferedReader(InputStreamReader(command.inputStream, java.nio.charset.StandardCharsets.UTF_8)).use { reader ->
+                        var line: String?
+                        while (reader.readLine().also { line = it } != null) {
+                            val raw = line ?: ""
+                            val parts = raw.split('\r')
+                            for (part in parts) {
+                                val cleaned = cleanProgressRemnants(part)
+                                if (cleaned.isNotBlank()) {
+                                    onOutput(cleaned + "\n")
+                                }
+                            }
+                        }
+                    }
+
+                    try { errFuture.get(2, TimeUnit.SECONDS) } catch (_: Exception) {}
+                    try {
+                        command.join(15, TimeUnit.SECONDS)
+                    } catch (_: Exception) {}
+                    val exitStatus = command.exitStatus ?: 0
+                    onComplete(exitStatus)
+                }
             } catch (e: Exception) {
                 onOutput("[ERROR]: " + (e.message ?: e.toString()) + "\n")
                 onComplete(-1)
             } finally {
+                try { session?.close() } catch (_: Exception) {}
                 if (isLongRunning) {
                     stopAppPortForward()
                     isProcessRunning = false

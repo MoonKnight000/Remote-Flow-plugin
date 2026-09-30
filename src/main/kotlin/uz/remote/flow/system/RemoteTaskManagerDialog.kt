@@ -82,7 +82,11 @@ class RemoteTaskManagerDialog(
 
         sortComboBox.preferredSize = Dimension(190, 26)
         sortComboBox.addActionListener {
-            refreshProcesses()
+            if (allProcesses.isNotEmpty()) {
+                applyFilter()
+            } else {
+                refreshProcesses()
+            }
         }
         leftToolbar.add(sortComboBox)
 
@@ -336,17 +340,23 @@ class RemoteTaskManagerDialog(
             }
         }
 
+        val sorted = when (sortComboBox.selectedIndex) {
+            1 -> filtered.sortedByDescending { it.memPercent }
+            2 -> filtered.sortedBy { it.command.lowercase(Locale.US) }
+            else -> filtered.sortedByDescending { it.cpuPercent }
+        }
+
         val selectedPid = getSelectedPid()
         tableModel.rowCount = 0
         var newSelectedRow = -1
 
-        for ((index, proc) in filtered.withIndex()) {
+        for ((index, proc) in sorted.withIndex()) {
             tableModel.addRow(arrayOf(
                 proc.pid,
                 proc.user,
-                String.format("%.1f%%", proc.cpuPercent),
-                String.format("%.1f%%", proc.memPercent),
-                String.format("%.1f MB", proc.rssMb),
+                String.format(Locale.US, "%.1f%%", proc.cpuPercent),
+                String.format(Locale.US, "%.1f%%", proc.memPercent),
+                String.format(Locale.US, "%.1f MB", proc.rssMb),
                 proc.command
             ))
             if (proc.pid == selectedPid) {

@@ -82,7 +82,9 @@ class ServerStatsManager(private val project: Project) {
             "NAME" -> "args"
             else -> "-%cpu"
         }
-        val cmd = "ps -eo pid:10,user:14,%cpu:8,%mem:8,rss:12,args --sort=$sortFlag 2>/dev/null | head -n ${limit + 1}"
+        val cmd = "(ps -eo pid:10,user:14,%cpu:8,%mem:8,rss:12,args --sort=$sortFlag 2>/dev/null || " +
+            "ps -eo pid,user,%cpu,%mem,rss,args 2>/dev/null || " +
+            "ps aux 2>/dev/null) | head -n ${maxOf(limit * 2, 80)}"
         val outputSb = StringBuilder()
 
         connectionManager.executeRemoteCommand(
@@ -90,11 +92,17 @@ class ServerStatsManager(private val project: Project) {
             workingDir = "",
             onOutput = { line -> outputSb.append(line) },
             onComplete = { code ->
-                if (code == 0) {
-                    val procs = parseProcessOutput(outputSb.toString())
-                    onSuccess(procs)
-                } else {
-                    onError("Failed to retrieve processes (Exit code: $code)")
+                try {
+                    val rawOutput = outputSb.toString()
+                    val procs = parseProcessOutput(rawOutput, sortBy, limit)
+                    if (procs.isNotEmpty() || code == 0) {
+                        onSuccess(procs)
+                    } else {
+                        val msg = rawOutput.trim()
+                        onError(if (msg.isNotBlank()) msg else "Failed to retrieve processes (Exit code: $code)")
+                    }
+                } catch (e: Exception) {
+                    onError("Failed to parse processes: ${e.message ?: e.toString()}")
                 }
             }
         )
@@ -120,25 +128,53 @@ class ServerStatsManager(private val project: Project) {
         )
     }
 
-    private fun parseProcessOutput(output: String): List<ProcessInfo> {
+    private fun parseProcessOutput(output: String, sortBy: String = "CPU", limit: Int = 40): List<ProcessInfo> {
         val list = mutableListOf<ProcessInfo>()
         val lines = output.lines()
-        for (i in 1 until lines.size) {
-            val line = lines[i].trim()
+        for (rawLine in lines) {
+            val line = rawLine.trim()
             if (line.isBlank()) continue
-            val parts = line.split("\\s+".toRegex(), limit = 6)
-            if (parts.size >= 6) {
+            val parts = line.split("\\s+".toRegex())
+            if (parts.isEmpty()) continue
+
+            // Skip header lines
+            if (parts[0].equals("PID", ignoreCase = true) || parts[0].equals("USER", ignoreCase = true)) {
+                continue
+            }
+            if (parts.getOrNull(1)?.equals("PID", ignoreCase = true) == true) {
+                continue
+            }
+
+            // Check if format is "ps -eo pid,user,%cpu,%mem,rss,args" (parts[0] is PID number)
+            if (parts[0].toLongOrNull() != null && parts.size >= 6) {
                 val pid = parts[0]
                 val user = parts[1]
-                val cpu = parts[2].toDoubleOrNull() ?: 0.0
-                val mem = parts[3].toDoubleOrNull() ?: 0.0
-                val rssKb = parts[4].toDoubleOrNull() ?: 0.0
+                val cpu = parts[2].replace(',', '.').toDoubleOrNull() ?: 0.0
+                val mem = parts[3].replace(',', '.').toDoubleOrNull() ?: 0.0
+                val rssKb = parts[4].replace(',', '.').toDoubleOrNull() ?: 0.0
                 val rssMb = rssKb / 1024.0
-                val command = parts[5]
+                val command = parts.subList(5, parts.size).joinToString(" ")
+                list.add(ProcessInfo(pid, user, cpu, mem, rssMb, command))
+            } else if (parts.size >= 11 && parts[1].toLongOrNull() != null) {
+                // "ps aux" format: USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND
+                val user = parts[0]
+                val pid = parts[1]
+                val cpu = parts[2].replace(',', '.').toDoubleOrNull() ?: 0.0
+                val mem = parts[3].replace(',', '.').toDoubleOrNull() ?: 0.0
+                val rssKb = parts[5].replace(',', '.').toDoubleOrNull() ?: 0.0
+                val rssMb = rssKb / 1024.0
+                val command = parts.subList(10, parts.size).joinToString(" ")
                 list.add(ProcessInfo(pid, user, cpu, mem, rssMb, command))
             }
         }
-        return list
+
+        // Sort in Kotlin to guarantee correct order regardless of remote ps behavior
+        val sorted = when (sortBy) {
+            "MEM" -> list.sortedByDescending { it.memPercent }
+            "NAME" -> list.sortedBy { it.command.lowercase() }
+            else -> list.sortedByDescending { it.cpuPercent }
+        }
+        return sorted.take(limit)
     }
 
     private data class CpuRaw(val active: Long, val total: Long)
