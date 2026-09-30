@@ -61,7 +61,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
     private val javaHomeField = JBTextField()
     private val btnAutoDetectJava = JButton("Detect Remote Java", AllIcons.Actions.Search)
     private val chkAutoSyncOnSave = JBCheckBox("⚡ Auto-Sync on Save (automatically upload files to server on Ctrl+S)", false)
-    private val chkRouteStandardRun = JBCheckBox("🔄 Route standard IDE Run/Debug (HomeSaleV2Application) to active remote server", true)
+    private val chkRouteStandardRun = JBCheckBox("🔄 Route standard IDE Run/Debug (Application / Spring Boot) to active remote server", true)
     private val chkOpenBrowser = JBCheckBox("🌐 Auto-open browser when application is ready", false)
     private val browserUrlField = JBTextField()
 
@@ -482,7 +482,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         form.add(chkAutoSyncOnSave, gbc)
 
         // Row 13: Route Standard Run
-        chkRouteStandardRun.toolTipText = "When enabled, pressing Shift+F10 / Run on HomeSaleV2Application automatically executes on the active remote server"
+        chkRouteStandardRun.toolTipText = "When enabled, standard Application / Spring Boot Run & Debug actions execute on the active remote server instead of locally. HTTP requests (.http), tests, and scripts are excluded."
         gbc.gridx = 0; gbc.gridy = 13; gbc.gridwidth = 4; gbc.weightx = 1.0
         form.add(chkRouteStandardRun, gbc)
 

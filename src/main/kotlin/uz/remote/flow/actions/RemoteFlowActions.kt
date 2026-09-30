@@ -191,7 +191,8 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
             var configSettings = runConfig?.let { rc ->
                 runManager.allSettings.find { it.configuration == rc }
             } ?: runManager.selectedConfiguration?.takeIf {
-                it.configuration is uz.remote.flow.run.RemoteFlowRunConfiguration || settings.routeStandardRunToRemote
+                it.configuration is uz.remote.flow.run.RemoteFlowRunConfiguration ||
+                (settings.routeStandardRunToRemote && uz.remote.flow.execution.RemoteFlowProgramRunner.isSupportedStandardApplication(it.configuration))
             } ?: runManager.getConfigurationSettingsList(type).firstOrNull()
 
             if (configSettings == null) {
@@ -415,7 +416,8 @@ class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in 
             var configSettings = runConfig?.let { rc ->
                 runManager.allSettings.find { it.configuration == rc }
             } ?: runManager.selectedConfiguration?.takeIf {
-                it.configuration is uz.remote.flow.run.RemoteFlowRunConfiguration || settings.routeStandardRunToRemote
+                it.configuration is uz.remote.flow.run.RemoteFlowRunConfiguration ||
+                (settings.routeStandardRunToRemote && uz.remote.flow.execution.RemoteFlowProgramRunner.isSupportedStandardApplication(it.configuration))
             } ?: runManager.getConfigurationSettingsList(type).firstOrNull()
 
             if (configSettings == null) {

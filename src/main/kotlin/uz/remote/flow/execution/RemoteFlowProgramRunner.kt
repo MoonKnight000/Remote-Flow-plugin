@@ -45,7 +45,84 @@ class RemoteFlowProgramRunner : ProgramRunner<RunnerSettings> {
         val settings = RemoteFlowSettings.getInstance(project)
         if (!settings.routeStandardRunToRemote) return false
         val p = settings.activeProfileOrNull ?: return false
-        return p.host.isNotBlank()
+        if (p.host.isBlank()) return false
+
+        return isSupportedStandardApplication(profile)
+    }
+
+    companion object {
+        /**
+         * Checks whether the given configuration is a standard JVM/Spring Boot application run configuration.
+         * Explicitly excludes HTTP client requests (.http / .rest), tests, database consoles, shell scripts, etc.
+         */
+        fun isSupportedStandardApplication(profile: RunProfile?): Boolean {
+            if (profile == null) return false
+            if (profile is RemoteFlowRunConfiguration) return true
+            val runConfig = profile as? RunConfiguration ?: return false
+
+            val typeId = runConfig.type.id
+            val className = runConfig.javaClass.name
+            val configName = runConfig.name
+
+            // Exclude HTTP client requests (.http / .rest files)
+            if (typeId.contains("HttpClient", ignoreCase = true) ||
+                typeId.contains("HttpRequest", ignoreCase = true) ||
+                typeId.contains("RestClient", ignoreCase = true) ||
+                typeId.contains("Http", ignoreCase = true) ||
+                className.contains("HttpClient", ignoreCase = true) ||
+                className.contains("HttpRequest", ignoreCase = true) ||
+                className.contains("RestClient", ignoreCase = true) ||
+                className.startsWith("com.intellij.httpClient") ||
+                className.startsWith("com.intellij.ws.rest") ||
+                configName.endsWith(".http", ignoreCase = true) ||
+                configName.endsWith(".rest", ignoreCase = true) ||
+                configName.contains("#")
+            ) {
+                return false
+            }
+
+            // Exclude unit / integration tests
+            if (typeId.contains("Test", ignoreCase = true) ||
+                typeId.contains("JUnit", ignoreCase = true) ||
+                className.contains("Test", ignoreCase = true) ||
+                className.contains("JUnit", ignoreCase = true)
+            ) {
+                return false
+            }
+
+            // Exclude databases, docker, terminal, scripts, scratches, frontend
+            if (typeId.contains("Database", ignoreCase = true) ||
+                className.contains("Database", ignoreCase = true) ||
+                className.startsWith("com.intellij.database") ||
+                typeId.contains("Docker", ignoreCase = true) ||
+                typeId.contains("Kubernetes", ignoreCase = true) ||
+                typeId.contains("Shell", ignoreCase = true) ||
+                typeId.contains("ShRunConfiguration", ignoreCase = true) ||
+                typeId.contains("Bash", ignoreCase = true) ||
+                typeId.contains("Batch", ignoreCase = true) ||
+                typeId.contains("Terminal", ignoreCase = true) ||
+                typeId.contains("Scratch", ignoreCase = true) ||
+                typeId.contains("NodeJS", ignoreCase = true) ||
+                typeId.contains("npm", ignoreCase = true) ||
+                typeId.contains("Yarn", ignoreCase = true) ||
+                typeId.contains("Vite", ignoreCase = true) ||
+                typeId.contains("JavaScript", ignoreCase = true)
+            ) {
+                return false
+            }
+
+            // Whitelist standard application run configurations
+            val isAppType = typeId == "Application" ||
+                    typeId.contains("SpringBoot", ignoreCase = true) ||
+                    typeId.contains("Kotlin", ignoreCase = true) ||
+                    className.contains("ApplicationConfiguration", ignoreCase = true) ||
+                    className.contains("SpringBoot", ignoreCase = true) ||
+                    configName.endsWith("Application", ignoreCase = true) ||
+                    (typeId.contains("Gradle", ignoreCase = true) &&
+                            (configName.contains("bootRun", ignoreCase = true) || configName.contains("run", ignoreCase = true)))
+
+            return isAppType
+        }
     }
 
     override fun execute(environment: ExecutionEnvironment) {
