@@ -204,8 +204,8 @@ class RemoteFlowLogService(private val project: Project) {
             val contentType = when {
                 entry.isError || isStackTraceLine -> ConsoleViewContentType.ERROR_OUTPUT
                 rawMsg.contains("[ERROR]") || rawMsg.contains(" ERROR ") || rawMsg.contains("FATAL") || rawMsg.contains("Exception") || rawMsg.contains("FAILED") -> ConsoleViewContentType.ERROR_OUTPUT
-                rawMsg.contains("[WARNING]") || rawMsg.contains("[WARN]") || rawMsg.contains(" WARN ") -> ConsoleViewContentType.LOG_WARNING_OUTPUT
-                rawMsg.contains("[SUCCESS]") || rawMsg.contains("[SYNC SUCCESS]") || rawMsg.contains("BUILD SUCCESSFUL") || rawMsg.contains("Started ") || rawMsg.contains("[APP READY]") -> ConsoleViewContentType.USER_INPUT
+                rawMsg.contains("[WARNING]") || rawMsg.contains("[WARN]") || rawMsg.contains(" WARN ") || rawMsg.contains("[AUTO-SYNC] 🗑️") -> ConsoleViewContentType.LOG_WARNING_OUTPUT
+                rawMsg.contains("[SUCCESS]") || rawMsg.contains("[SYNC SUCCESS]") || rawMsg.contains("BUILD SUCCESSFUL") || rawMsg.contains("Started ") || rawMsg.contains("[APP READY]") || rawMsg.contains("[AUTO-SYNC] ⚡") -> ConsoleViewContentType.USER_INPUT
                 rawMsg.contains("[REMOTE RUN]") || rawMsg.contains("[REMOTE DEBUG]") || rawMsg.contains("[PORT") || rawMsg.contains("[GIT") || rawMsg.contains("[AUTO-SYNC") || rawMsg.contains("[SYNC") || rawMsg.contains("[AI") -> ConsoleViewContentType.LOG_INFO_OUTPUT
                 else -> ConsoleViewContentType.NORMAL_OUTPUT
             }
