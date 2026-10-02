@@ -46,19 +46,24 @@ object RemoteDebugHelper {
 
                 val runConfig = settings.configuration
 
-                // RemoteConfiguration has public fields: HOST, PORT, USE_SOCKET_TRANSPORT, SERVER_MODE
+                // RemoteConfiguration has public fields: HOST, PORT, USE_SOCKET_TRANSPORT, SERVER_MODE, AUTO_RESTART
                 try {
                     val configClass = runConfig.javaClass
                     configClass.getField("HOST").set(runConfig, host)
                     configClass.getField("PORT").set(runConfig, port.toString())
                     configClass.getField("USE_SOCKET_TRANSPORT").set(runConfig, true)
                     configClass.getField("SERVER_MODE").set(runConfig, false) // Attach mode
+                    try { configClass.getField("AUTO_RESTART").set(runConfig, true) } catch (_: Exception) {}
                 } catch (e: Exception) {
                     try {
                         val hostField = runConfig.javaClass.getDeclaredField("HOST").apply { isAccessible = true }
                         hostField.set(runConfig, host)
                         val portField = runConfig.javaClass.getDeclaredField("PORT").apply { isAccessible = true }
                         portField.set(runConfig, port.toString())
+                        try {
+                            val autoRestartField = runConfig.javaClass.getDeclaredField("AUTO_RESTART").apply { isAccessible = true }
+                            autoRestartField.set(runConfig, true)
+                        } catch (_: Exception) {}
                     } catch (_: Exception) {}
                 }
 

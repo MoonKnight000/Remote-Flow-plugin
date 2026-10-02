@@ -50,6 +50,7 @@
     ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.java</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <projectConfigurable parentId="tools"
@@ -74,6 +75,7 @@
                     factoryClass="uz.remote.flow.ui.RemoteFlowLogToolWindowFactory"/>
 
         <programRunner implementation="uz.remote.flow.execution.RemoteFlowProgramRunner" order="first"/>
+        <programRunner implementation="uz.remote.flow.execution.RemoteFlowDebuggerRunner" order="first"/>
 
         <configurationType implementation="uz.remote.flow.run.RemoteFlowConfigurationType"/>
 
