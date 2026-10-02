@@ -84,11 +84,6 @@
         <notificationGroup id="Remote Flow" displayType="BALLOON" isLogByDefault="true"/>
     </extensions>
 
-    <projectListeners>
-        <listener class="uz.remote.flow.sync.RemoteFlowAutoSyncService"
-                  topic="com.intellij.openapi.fileEditor.FileDocumentManagerListener"/>
-    </projectListeners>
-
     <actions>
         <!-- Group in Tools Menu -->
         <group id="RemoteFlow.ToolsGroup" text="Remote Flow" description="Remote Flow operations" popup="true" icon="icons/remoteFlow.svg">

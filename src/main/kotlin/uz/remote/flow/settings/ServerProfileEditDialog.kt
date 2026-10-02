@@ -65,7 +65,10 @@ class ServerProfileEditDialog(
     private val preRunCommandField = JBTextField(profile.preRunCommand)
     private val postRunCommandField = JBTextField(profile.postRunCommand)
 
-    private val chkAutoSyncOnSave = com.intellij.ui.components.JBCheckBox("⚡ Auto-Sync on Save (automatically upload files on save)", profile.autoSyncOnSave)
+    private val chkAutoSyncOnSave = com.intellij.ui.components.JBCheckBox("⚡ Real-Time Auto-Sync (Sync when typing pauses & external AI changes)", profile.autoSyncOnSave).apply {
+        toolTipText = "Automatically detects and uploads code changes after you finish typing or when external AI coding tools modify files."
+    }
+    private val autoSyncDelayField = JBTextField(profile.autoSyncDelayMs.toString(), 5)
     private val btnTestConn = JButton("Test Connection", AllIcons.Actions.Execute)
 
     init {
@@ -127,6 +130,7 @@ class ServerProfileEditDialog(
         rsyncPathField.text = profile.rsyncPath
         javaHomeField.text = profile.javaHome
         chkAutoSyncOnSave.isSelected = profile.autoSyncOnSave
+        autoSyncDelayField.text = profile.autoSyncDelayMs.toString()
         testCommandField.text = profile.testCommand.ifBlank { "./gradlew test" }
         buildCommandField.text = profile.buildCommand.ifBlank { "./gradlew build -x test" }
 
@@ -436,9 +440,14 @@ class ServerProfileEditDialog(
 
         // Row 17: Production Safety & Auto-Sync
         gbc.gridx = 0; gbc.gridy = 17; gbc.gridwidth = 4; gbc.weightx = 1.0
-        val flagsPanel = JPanel(GridLayout(2, 1, 0, 2))
+        val flagsPanel = JPanel(GridLayout(3, 1, 0, 2))
         flagsPanel.add(chkConfirmProduction)
         flagsPanel.add(chkAutoSyncOnSave)
+        val delayPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
+        delayPanel.add(JBLabel("   ↳ Typing pause delay: "))
+        delayPanel.add(autoSyncDelayField)
+        delayPanel.add(JBLabel("ms (waits after you stop typing before syncing)"))
+        flagsPanel.add(delayPanel)
         form.add(flagsPanel, gbc)
 
         // Row 18: Test Button
@@ -469,6 +478,7 @@ class ServerProfileEditDialog(
         p.testCommand = testCommandField.text.trim().ifBlank { "./gradlew test" }
         p.buildCommand = buildCommandField.text.trim().ifBlank { "./gradlew build -x test" }
         p.autoSyncOnSave = chkAutoSyncOnSave.isSelected
+        p.autoSyncDelayMs = autoSyncDelayField.text.trim().toIntOrNull() ?: 1500
 
         p.environment = when (envBox.selectedIndex) {
             1 -> uz.remote.flow.ssh.ServerEnvironment.STAGING

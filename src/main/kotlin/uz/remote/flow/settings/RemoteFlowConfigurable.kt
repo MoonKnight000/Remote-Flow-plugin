@@ -62,7 +62,10 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
 
     private val javaHomeField = JBTextField()
     private val btnAutoDetectJava = JButton("Detect Remote Java", AllIcons.Actions.Search)
-    private val chkAutoSyncOnSave = JBCheckBox("⚡ Auto-Sync on Save (automatically upload files to server on Ctrl+S)", false)
+    private val chkAutoSyncOnSave = JBCheckBox("⚡ Real-Time Auto-Sync (Sync when typing pauses & external AI changes)", true).apply {
+        toolTipText = "Automatically detects and uploads code changes after you finish typing or when external AI coding tools modify files."
+    }
+    private val autoSyncDelayField = JBTextField("1500", 5)
     private val chkRouteStandardRun = JBCheckBox("🔄 Route standard IDE Run/Debug (Application / Spring Boot) to active remote server", true)
     private val chkOpenBrowser = JBCheckBox("🌐 Auto-open browser when application is ready", false)
     private val browserUrlField = JBTextField()
@@ -303,7 +306,8 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         javaHomeField.text = ""
         runCommandField.text = ""
         debugCommandField.text = ""
-        chkAutoSyncOnSave.isSelected = false
+        chkAutoSyncOnSave.isSelected = true
+        autoSyncDelayField.text = "1500"
         if (::portsTableModel.isInitialized) {
             portsTableModel.rowCount = 0
         }
@@ -478,10 +482,14 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(debugCommandField, gbc)
         gbc.gridwidth = 1
 
-        // Row 12: Auto-Sync on Save
-        chkAutoSyncOnSave.toolTipText = "Automatically sync files to server whenever saved (Ctrl+S)"
+        // Row 12: Real-Time Auto-Sync
+        val autoSyncPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
+        autoSyncPanel.add(chkAutoSyncOnSave)
+        autoSyncPanel.add(JBLabel("  ↳ Typing pause delay: "))
+        autoSyncPanel.add(autoSyncDelayField)
+        autoSyncPanel.add(JBLabel("ms"))
         gbc.gridx = 0; gbc.gridy = 12; gbc.gridwidth = 4; gbc.weightx = 1.0
-        form.add(chkAutoSyncOnSave, gbc)
+        form.add(autoSyncPanel, gbc)
 
         // Row 13: Route Standard Run
         chkRouteStandardRun.toolTipText = "When enabled, standard Application / Spring Boot Run & Debug actions execute on the active remote server instead of locally. HTTP requests (.http), tests, and scripts are excluded."
@@ -650,6 +658,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         runCommandField.text = p.runCommand
         debugCommandField.text = p.debugCommand
         chkAutoSyncOnSave.isSelected = p.autoSyncOnSave
+        autoSyncDelayField.text = p.autoSyncDelayMs.toString()
         chkOpenBrowser.isSelected = p.openBrowserOnReady
         browserUrlField.text = p.browserUrl.ifBlank { "http://localhost:8080" }
         autoReconnectCheck.isSelected = settings.autoReconnect
@@ -681,6 +690,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         p.runCommand = runCommandField.text.trim()
         p.debugCommand = debugCommandField.text.trim()
         p.autoSyncOnSave = chkAutoSyncOnSave.isSelected
+        p.autoSyncDelayMs = autoSyncDelayField.text.trim().toIntOrNull() ?: 1500
         p.openBrowserOnReady = chkOpenBrowser.isSelected
         p.browserUrl = browserUrlField.text.trim().ifBlank { "http://localhost:8080" }
 
@@ -733,6 +743,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
                 a.debugCommand != b.debugCommand || a.authType != b.authType ||
                 a.excludePatterns != b.excludePatterns || a.rsyncPath != b.rsyncPath ||
                 a.javaHome != b.javaHome || a.autoSyncOnSave != b.autoSyncOnSave ||
+                a.autoSyncDelayMs != b.autoSyncDelayMs ||
                 a.openBrowserOnReady != b.openBrowserOnReady || a.browserUrl != b.browserUrl ||
                 a.forwardedPorts.size != b.forwardedPorts.size
             ) {
