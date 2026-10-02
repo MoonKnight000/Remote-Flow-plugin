@@ -188,11 +188,12 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
             val settings = RemoteFlowSettings.getInstance(project)
             val runManager = com.intellij.execution.RunManager.getInstance(project)
             val type = uz.remote.flow.run.RemoteFlowConfigurationType.getInstance()
+            val connMgr = uz.remote.flow.ssh.RemoteConnectionManager.getInstance(project)
             var configSettings = runConfig?.let { rc ->
                 runManager.allSettings.find { it.configuration == rc }
             } ?: runManager.selectedConfiguration?.takeIf {
                 it.configuration is uz.remote.flow.run.RemoteFlowRunConfiguration ||
-                (settings.routeStandardRunToRemote && uz.remote.flow.execution.RemoteFlowProgramRunner.isSupportedStandardApplication(it.configuration))
+                (settings.routeStandardRunToRemote && connMgr.isConnected && uz.remote.flow.execution.RemoteFlowProgramRunner.isSupportedStandardApplication(it.configuration))
             } ?: runManager.getConfigurationSettingsList(type).firstOrNull()
 
             if (configSettings == null) {
@@ -254,11 +255,12 @@ class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in 
             val settings = RemoteFlowSettings.getInstance(project)
             val runManager = com.intellij.execution.RunManager.getInstance(project)
             val type = uz.remote.flow.run.RemoteFlowConfigurationType.getInstance()
+            val connMgr = uz.remote.flow.ssh.RemoteConnectionManager.getInstance(project)
             var configSettings = runConfig?.let { rc ->
                 runManager.allSettings.find { it.configuration == rc }
             } ?: runManager.selectedConfiguration?.takeIf {
                 it.configuration is uz.remote.flow.run.RemoteFlowRunConfiguration ||
-                (settings.routeStandardRunToRemote && uz.remote.flow.execution.RemoteFlowProgramRunner.isSupportedStandardApplication(it.configuration))
+                (settings.routeStandardRunToRemote && connMgr.isConnected && uz.remote.flow.execution.RemoteFlowProgramRunner.isSupportedStandardApplication(it.configuration))
             } ?: runManager.getConfigurationSettingsList(type).firstOrNull()
 
             if (configSettings == null) {

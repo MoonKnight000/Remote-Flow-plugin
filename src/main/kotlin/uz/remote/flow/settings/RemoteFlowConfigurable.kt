@@ -66,7 +66,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         toolTipText = "Automatically detects and uploads code changes after you finish typing or when external AI coding tools modify files."
     }
     private val autoSyncDelayField = JBTextField("1500", 5)
-    private val chkRouteStandardRun = JBCheckBox("🔄 Route standard IDE Run/Debug (Application / Spring Boot) to active remote server", true)
+    private val chkRouteStandardRun = JBCheckBox("🔄 Route standard IDE Run/Debug (Application / Spring Boot) to active remote server", false)
     private val chkOpenBrowser = JBCheckBox("🌐 Auto-open browser when application is ready", false)
     private val browserUrlField = JBTextField()
 

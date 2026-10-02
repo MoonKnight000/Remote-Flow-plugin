@@ -32,6 +32,8 @@ class RemoteFlowProgramRunner : ProgramRunner<RunnerSettings> {
         val project = (profile as? RunConfiguration)?.project ?: return false
         val settings = RemoteFlowSettings.getInstance(project)
         if (!settings.routeStandardRunToRemote) return false
+        val connMgr = uz.remote.flow.ssh.RemoteConnectionManager.getInstance(project)
+        if (!connMgr.isConnected) return false
         val p = settings.activeProfileOrNull ?: return false
         if (p.host.isBlank()) return false
 

@@ -20,7 +20,7 @@ class RemoteFlowSettings(private val project: Project) : PersistentStateComponen
         var profiles: MutableList<ServerProfile> = mutableListOf()
         var activeProfileIndex: Int = 0
         var autoReconnect: Boolean = true
-        var routeStandardRunToRemote: Boolean = true
+        var routeStandardRunToRemote: Boolean = false
         var enableAgentBridge: Boolean = true
     }
 

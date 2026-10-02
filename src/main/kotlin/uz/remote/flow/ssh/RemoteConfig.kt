@@ -223,11 +223,11 @@ fun cleanAnsiText(text: String): String {
 fun buildRemoteExecutionCommand(rawCmd: String, javaHome: String): String {
     val javaPrefix = resolveJavaEnvPrefix(javaHome)
     var cmd = rawCmd.trim()
-    // If executing Gradle, ensure colored console without rich progress animations
+    // If executing Gradle, ensure rich console for colorized ANSI output
     if ((cmd.contains("gradlew") || cmd.contains("gradle")) && !cmd.contains("--console")) {
-        cmd = "$cmd --console=colored"
+        cmd = "$cmd --console=rich"
     }
-    return "${javaPrefix}export GRADLE_OPTS=\"-Dorg.gradle.console=colored \${GRADLE_OPTS:-}\"; export TERM=xterm-256color; export FORCE_COLOR=1; export SPRING_OUTPUT_ANSI_ENABLED=ALWAYS; sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $cmd"
+    return "${javaPrefix}export GRADLE_OPTS=\"-Dorg.gradle.console=rich \${GRADLE_OPTS:-}\"; export TERM=xterm-256color; export FORCE_COLOR=1; export SPRING_OUTPUT_ANSI_ENABLED=ALWAYS; sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $cmd"
 }
 
 fun cleanProgressRemnants(text: String): String {
