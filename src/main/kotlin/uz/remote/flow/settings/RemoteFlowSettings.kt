@@ -21,6 +21,7 @@ class RemoteFlowSettings(private val project: Project) : PersistentStateComponen
         var activeProfileIndex: Int = 0
         var autoReconnect: Boolean = true
         var routeStandardRunToRemote: Boolean = true
+        var enableAgentBridge: Boolean = true
     }
 
     private var myState = State()
@@ -83,6 +84,12 @@ class RemoteFlowSettings(private val project: Project) : PersistentStateComponen
         get() = myState.routeStandardRunToRemote
         set(value) {
             myState.routeStandardRunToRemote = value
+        }
+
+    var enableAgentBridge: Boolean
+        get() = myState.enableAgentBridge
+        set(value) {
+            myState.enableAgentBridge = value
         }
 
     companion object {

@@ -28,3 +28,6 @@ Thumbs.db
 
 # Log files
 *.log
+
+# Remote Flow temporary files
+.remote-flow*

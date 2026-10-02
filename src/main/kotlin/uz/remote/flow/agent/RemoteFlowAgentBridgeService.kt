@@ -9,6 +9,7 @@ import com.sun.net.httpserver.HttpHandler
 import com.sun.net.httpserver.HttpServer
 import uz.remote.flow.logging.LogCategory
 import uz.remote.flow.logging.RemoteFlowLogService
+import uz.remote.flow.settings.RemoteFlowSettings
 import uz.remote.flow.ssh.RemoteConnectionManager
 import uz.remote.flow.ssh.buildRemoteExecutionCommand
 import uz.remote.flow.sync.FastSyncManager
@@ -19,6 +20,7 @@ import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 @Service(Service.Level.PROJECT)
@@ -31,13 +33,32 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
     private val connectionManager get() = RemoteConnectionManager.getInstance(project)
     private val syncManager get() = FastSyncManager(project)
     private val logService get() = RemoteFlowLogService.getInstance(project)
+    private val settings get() = RemoteFlowSettings.getInstance(project)
+
+    val remoteFlowHome: File
+        get() = File(System.getProperty("user.home"), ".remote-flow")
+
+    val remoteFlowBinDir: File
+        get() = File(remoteFlowHome, "bin")
+
+    val remoteFlowStateDir: File
+        get() = File(remoteFlowHome, "state")
 
     @Synchronized
     fun start() {
         if (isRunning.get() || project.isDisposed) return
 
+        // Always clean any legacy files left in the project root
+        cleanLegacyProjectFiles()
+
+        if (!settings.enableAgentBridge) return
+        val base = project.basePath ?: return
+
         pool.submit {
             try {
+                // 1. Ensure global CLI scripts exist in ~/.remote-flow/bin and bin is in user PATH
+                ensureGlobalCliHelperFiles()
+
                 val http = try {
                     HttpServer.create(InetSocketAddress("127.0.0.1", 45789), 0)
                 } catch (_: Exception) {
@@ -58,11 +79,10 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
                 isRunning.set(true)
 
                 val assignedPort = http.address.port
-                writePortFile(assignedPort)
-                ensureCliHelperFiles()
+                writeStateFile(assignedPort)
 
                 logService.log(
-                    "[AI BRIDGE] Started local bridge server on port $assignedPort. CLI scripts (rf, rf.cmd, rf.ps1) are ready.",
+                    "[AI BRIDGE] Started local bridge server on port $assignedPort. Global CLI: ~/.remote-flow/bin/rf (zero files added to project).",
                     LogCategory.AI,
                     connectionManager.config.activeProfile.name
                 )
@@ -77,64 +97,137 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
         }
     }
 
-    private fun writePortFile(port: Int) {
+    private fun getProjectKey(): String {
+        val base = project.basePath ?: project.name
+        return Math.abs((project.name + "_" + base.replace('\\', '/')).hashCode()).toString()
+    }
+
+    private fun writeStateFile(port: Int) {
         val base = project.basePath ?: return
         try {
-            val portFile = File(base, ".remote-flow.port")
-            portFile.writeText(port.toString(), StandardCharsets.UTF_8)
-            portFile.deleteOnExit()
+            remoteFlowStateDir.mkdirs()
+            val stateFile = File(remoteFlowStateDir, "project_${getProjectKey()}.properties")
+            val content = buildString {
+                append("PORT=").append(port).append("\n")
+                append("PROJECT_NAME=").append(project.name).append("\n")
+                append("PROJECT_PATH=").append(base.replace('\\', '/')).append("\n")
+            }
+            stateFile.writeText(content, StandardCharsets.UTF_8)
+            stateFile.deleteOnExit()
         } catch (_: Exception) {}
     }
 
     private fun writeExitCodeFile(code: Int) {
-        val base = project.basePath ?: return
+        val s = server ?: return
         try {
-            val exitFile = File(base, ".remote-flow.exitcode")
+            remoteFlowStateDir.mkdirs()
+            val exitFile = File(remoteFlowStateDir, "exitcode_${s.address.port}.txt")
             exitFile.writeText(code.toString(), StandardCharsets.UTF_8)
         } catch (_: Exception) {}
     }
 
-    private fun cleanPortFiles() {
-        val base = project.basePath ?: return
+    fun cleanStateFiles() {
         try {
-            File(base, ".remote-flow.port").delete()
-            File(base, ".remote-flow.exitcode").delete()
+            val stateFile = File(remoteFlowStateDir, "project_${getProjectKey()}.properties")
+            if (stateFile.exists()) stateFile.delete()
+            server?.let { s ->
+                val exitFile = File(remoteFlowStateDir, "exitcode_${s.address.port}.txt")
+                if (exitFile.exists()) exitFile.delete()
+            }
         } catch (_: Exception) {}
     }
 
-    fun ensureCliHelperFiles() {
+    fun cleanLegacyProjectFiles() {
         val base = project.basePath ?: return
         try {
+            val portFile = File(base, ".remote-flow.port")
+            if (portFile.exists()) portFile.delete()
+
+            val exitFile = File(base, ".remote-flow.exitcode")
+            if (exitFile.exists()) exitFile.delete()
+
             val rfCmd = File(base, "rf.cmd")
-            if (!rfCmd.exists()) {
-                rfCmd.writeText(generateRfCmd(), StandardCharsets.UTF_8)
+            if (rfCmd.exists()) {
+                val text = rfCmd.readText(StandardCharsets.UTF_8)
+                if (text.contains("Remote Flow") || text.contains(".remote-flow.port")) {
+                    rfCmd.delete()
+                }
             }
 
             val rfPs1 = File(base, "rf.ps1")
-            if (!rfPs1.exists()) {
-                rfPs1.writeText(generateRfPs1(), StandardCharsets.UTF_8)
+            if (rfPs1.exists()) {
+                val text = rfPs1.readText(StandardCharsets.UTF_8)
+                if (text.contains("Remote Flow") || text.contains(".remote-flow.port")) {
+                    rfPs1.delete()
+                }
             }
 
             val rfBash = File(base, "rf")
-            if (!rfBash.exists()) {
-                rfBash.writeText(generateRfBash(), StandardCharsets.UTF_8)
-                rfBash.setExecutable(true, false)
+            if (rfBash.exists()) {
+                val text = rfBash.readText(StandardCharsets.UTF_8)
+                if (text.contains("Remote Flow") || text.contains(".remote-flow.port")) {
+                    rfBash.delete()
+                }
             }
 
-            val agentsMd = File(base, "AGENTS.md")
-            if (!agentsMd.exists()) {
-                agentsMd.writeText(generateAgentsMd(), StandardCharsets.UTF_8)
+            val ruleFile = File(base, ".antigravity/rules/remote-execution.md")
+            if (ruleFile.exists()) {
+                val text = ruleFile.readText(StandardCharsets.UTF_8)
+                if (text.contains("Remote Flow")) {
+                    ruleFile.delete()
+                }
             }
 
             val rulesDir = File(base, ".antigravity/rules")
-            if (!rulesDir.exists()) {
-                rulesDir.mkdirs()
+            if (rulesDir.exists() && rulesDir.list().isNullOrEmpty()) {
+                rulesDir.delete()
             }
-            val ruleFile = File(rulesDir, "remote-execution.md")
-            if (!ruleFile.exists()) {
-                ruleFile.writeText(generateAgentsMd(), StandardCharsets.UTF_8)
+
+            val agDir = File(base, ".antigravity")
+            if (agDir.exists() && agDir.list().isNullOrEmpty()) {
+                agDir.delete()
             }
         } catch (_: Exception) {}
+    }
+
+    fun ensureGlobalCliHelperFiles() {
+        try {
+            remoteFlowBinDir.mkdirs()
+            val rfCmd = File(remoteFlowBinDir, "rf.cmd")
+            rfCmd.writeText(generateRfCmd(), StandardCharsets.UTF_8)
+
+            val rfPs1 = File(remoteFlowBinDir, "rf.ps1")
+            rfPs1.writeText(generateRfPs1(), StandardCharsets.UTF_8)
+
+            val rfBash = File(remoteFlowBinDir, "rf")
+            rfBash.writeText(generateRfBash(), StandardCharsets.UTF_8)
+            rfBash.setExecutable(true, false)
+
+            ensureUserPathContains(remoteFlowBinDir.absolutePath)
+        } catch (_: Exception) {}
+    }
+
+    private fun ensureUserPathContains(binPath: String) {
+        val os = System.getProperty("os.name", "").lowercase()
+        if (os.contains("win")) {
+            try {
+                val normalizedBin = binPath.replace('/', '\\')
+                val checkProc = ProcessBuilder(
+                    "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                    "[Environment]::GetEnvironmentVariable('Path', 'User')"
+                ).start()
+                val currentPath = checkProc.inputStream.bufferedReader().readText().trim()
+                checkProc.waitFor(3, TimeUnit.SECONDS)
+
+                if (!currentPath.split(';').any { it.trim().equals(normalizedBin, ignoreCase = true) }) {
+                    val script = "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ';$normalizedBin', 'User')"
+                    val setProc = ProcessBuilder(
+                        "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script
+                    ).start()
+                    setProc.waitFor(3, TimeUnit.SECONDS)
+                }
+            } catch (_: Exception) {}
+        }
     }
 
     private inner class StatusHandler : HttpHandler {
@@ -145,6 +238,7 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
                 append("{")
                 append("\"status\":\"ok\",")
                 append("\"project\":\"").append(escapeJson(project.name)).append("\",")
+                append("\"projectPath\":\"").append(escapeJson(project.basePath ?: "")).append("\",")
                 append("\"connected\":").append(isConn).append(",")
                 append("\"activeProfile\":{")
                 append("\"name\":\"").append(escapeJson(profile.name)).append("\",")
@@ -438,7 +532,7 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
         try {
             server?.stop(0)
         } catch (_: Exception) {}
-        cleanPortFiles()
+        cleanStateFiles()
         pool.shutdownNow()
     }
 
@@ -449,41 +543,84 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
         fun generateRfCmd(): String = """@echo off
 setlocal enabledelayedexpansion
 
-set "DIR=%~dp0"
-set "PORT_FILE=%DIR%.remote-flow.port"
-set "EXIT_FILE=%DIR%.remote-flow.exitcode"
+set "RF_DIR=%USERPROFILE%\.remote-flow"
+set "STATE_DIR=%RF_DIR%\state"
+set "CUR_DIR=%CD%"
+set "CUR_DIR=%CUR_DIR:\=/%"
 
-if not exist "%PORT_FILE%" (
-    echo [Remote Flow] Error: IntelliJ IDEA Remote Flow bridge is not running.
+set "RF_PORT="
+
+rem 1. Check project state files matching current working directory
+if exist "%STATE_DIR%" (
+    for %%F in ("%STATE_DIR%\project_*.properties") do (
+        set "P_PATH="
+        set "P_PORT="
+        for /f "usebackq tokens=1,2 delims==" %%A in ("%%~F") do (
+            if /i "%%A"=="PROJECT_PATH" set "P_PATH=%%B"
+            if /i "%%A"=="PORT" set "P_PORT=%%B"
+        )
+        if defined P_PATH (
+            echo !CUR_DIR!/ | findstr /i /c:"!P_PATH!/" >nul 2>&1
+            if not errorlevel 1 (
+                set "RF_PORT=!P_PORT!"
+            )
+        )
+    )
+)
+
+rem 2. Fallback: if only one project state file exists, use its port
+if not defined RF_PORT (
+    if exist "%STATE_DIR%" (
+        for %%F in ("%STATE_DIR%\project_*.properties") do (
+            for /f "usebackq tokens=1,2 delims==" %%A in ("%%~F") do (
+                if /i "%%A"=="PORT" set "RF_PORT=%%B"
+            )
+        )
+    )
+)
+
+rem 3. Fallback: check legacy local port file if it exists
+if not defined RF_PORT (
+    if exist "%CD%\.remote-flow.port" (
+        set /p RF_PORT=<"%CD%\.remote-flow.port"
+        set "RF_PORT=!RF_PORT: =!"
+    )
+)
+
+rem 4. Fallback: default port 45789
+if not defined RF_PORT set "RF_PORT=45789"
+
+rem Test bridge connection
+curl.exe -s --connect-timeout 2 "http://127.0.0.1:!RF_PORT!/api/status" >nul 2>&1
+if errorlevel 1 (
+    echo [Remote Flow] Error: IntelliJ IDEA Remote Flow bridge is not running on port !RF_PORT!.
     echo Please ensure IntelliJ IDEA is open with Remote Flow active.
     exit /b 1
 )
 
-set /p RF_PORT=<"%PORT_FILE%"
-set "RF_PORT=!RF_PORT: =!"
+set "EXIT_FILE=%STATE_DIR%\exitcode_!RF_PORT!.txt"
+if exist "!EXIT_FILE!" del /f /q "!EXIT_FILE!" >nul 2>&1
 
 set "ACTION=%~1"
 if "%ACTION%"=="" set "ACTION=status"
 
-if exist "%EXIT_FILE%" del /f /q "%EXIT_FILE%" >nul 2>&1
-
 if /i "%ACTION%"=="test" (
-    curl.exe -s -N -X POST "http://127.0.0.1:%RF_PORT%/api/test"
+    curl.exe -s -N -X POST "http://127.0.0.1:!RF_PORT!/api/test"
     goto :finish
 )
 
 if /i "%ACTION%"=="build" (
-    curl.exe -s -N -X POST "http://127.0.0.1:%RF_PORT%/api/build"
+    curl.exe -s -N -X POST "http://127.0.0.1:!RF_PORT!/api/build"
     goto :finish
 )
 
 if /i "%ACTION%"=="sync" (
-    curl.exe -s -N -X POST "http://127.0.0.1:%RF_PORT%/api/sync"
+    curl.exe -s -N -X POST "http://127.0.0.1:!RF_PORT!/api/sync"
     goto :finish
 )
 
 if /i "%ACTION%"=="status" (
-    curl.exe -s "http://127.0.0.1:%RF_PORT%/api/status"
+    curl.exe -s "http://127.0.0.1:!RF_PORT!/api/status"
     echo.
     goto :finish
 )
@@ -497,7 +634,7 @@ if /i "%ACTION%"=="exec" (
     shift
     goto :loop
     :endloop
-    curl.exe -s -N -X POST "http://127.0.0.1:%RF_PORT%/api/exec" --data-binary "!REM_ARGS!"
+    curl.exe -s -N -X POST "http://127.0.0.1:!RF_PORT!/api/exec" --data-binary "!REM_ARGS!"
     goto :finish
 )
 
@@ -506,8 +643,9 @@ echo Usage: rf ^<test ^| build ^| sync ^| exec ^<command^> ^| status^>
 exit /b 1
 
 :finish
-if exist "%EXIT_FILE%" (
-    set /p CODE=<"%EXIT_FILE%"
+if exist "!EXIT_FILE!" (
+    set /p CODE=<"!EXIT_FILE!"
+    del /f /q "!EXIT_FILE!" >nul 2>&1
     exit /b !CODE!
 )
 exit /b 0
@@ -520,16 +658,58 @@ exit /b 0
     [string[]]${'$'}RemainingArgs
 )
 
-${'$'}portFile = Join-Path ${'$'}PSScriptRoot ".remote-flow.port"
-${'$'}exitFile = Join-Path ${'$'}PSScriptRoot ".remote-flow.exitcode"
+${'$'}rfDir = Join-Path ${'$'}env:USERPROFILE ".remote-flow"
+${'$'}stateDir = Join-Path ${'$'}rfDir "state"
+${'$'}curDir = (Get-Location).Path.Replace('\', '/').TrimEnd('/') + '/'
+${'$'}port = ${'$'}null
 
-if (-not (Test-Path ${'$'}portFile)) {
-    Write-Error "[Remote Flow] Error: IntelliJ IDEA Remote Flow bridge is not running. Please ensure IntelliJ is open with Remote Flow active."
-    exit 1
+if (Test-Path ${'$'}stateDir) {
+    ${'$'}files = Get-ChildItem -Path ${'$'}stateDir -Filter "project_*.properties" -ErrorAction SilentlyContinue
+    foreach (${'$'}f in ${'$'}files) {
+        ${'$'}props = @{}
+        Get-Content ${'$'}f.FullName -ErrorAction SilentlyContinue | ForEach-Object {
+            ${'$'}idx = ${'$'}_.IndexOf('=')
+            if (${'$'}idx -gt 0) {
+                ${'$'}k = ${'$'}_.Substring(0, ${'$'}idx).Trim()
+                ${'$'}v = ${'$'}_.Substring(${'$'}idx + 1).Trim()
+                ${'$'}props[${'$'}k] = ${'$'}v
+            }
+        }
+        ${'$'}pPath = ${'$'}props["PROJECT_PATH"]
+        if (${'$'}pPath) {
+            ${'$'}pNorm = ${'$'}pPath.Replace('\', '/').TrimEnd('/') + '/'
+            if (${'$'}curDir.StartsWith(${'$'}pNorm, [System.StringComparison]::OrdinalIgnoreCase)) {
+                ${'$'}port = ${'$'}props["PORT"]
+                break
+            }
+        }
+    }
+    if (-not ${'$'}port -and ${'$'}files -and ${'$'}files.Count -eq 1) {
+        ${'$'}line = Get-Content ${'$'}files[0].FullName -ErrorAction SilentlyContinue | Where-Object { ${'$'}_ -like "PORT=*" } | Select-Object -First 1
+        if (${'$'}line) {
+            ${'$'}port = (${'$'}line -split '=', 2)[1].Trim()
+        }
+    }
 }
 
-${'$'}port = (Get-Content ${'$'}portFile -Raw).Trim()
+if (-not ${'$'}port) {
+    ${'$'}localPort = Join-Path (Get-Location).Path ".remote-flow.port"
+    if (Test-Path ${'$'}localPort) {
+        ${'$'}port = (Get-Content ${'$'}localPort -Raw -ErrorAction SilentlyContinue).Trim()
+    }
+}
+
+if (-not ${'$'}port) { ${'$'}port = "45789" }
+
+${'$'}exitFile = Join-Path ${'$'}stateDir "exitcode_${'$'}port.txt"
 if (Test-Path ${'$'}exitFile) { Remove-Item ${'$'}exitFile -Force -ErrorAction SilentlyContinue }
+
+try {
+    ${'$'}null = Invoke-WebRequest -Uri "http://127.0.0.1:${'$'}port/api/status" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+} catch {
+    Write-Error "[Remote Flow] Error: IntelliJ IDEA Remote Flow bridge is not running on port ${'$'}port. Please ensure IntelliJ is open with Remote Flow active."
+    exit 1
+}
 
 switch (${'$'}Action.ToLower()) {
     "test" {
@@ -550,30 +730,58 @@ switch (${'$'}Action.ToLower()) {
         & curl.exe -s -N -X POST "http://127.0.0.1:${'$'}port/api/exec" --data-binary "${'$'}cmd"
     }
     default {
-        Write-Host "Usage: .\rf.ps1 <test | build | sync | exec <command> | status>"
+        Write-Host "Usage: rf <test | build | sync | exec <command> | status>"
         exit 1
     }
 }
 
 if (Test-Path ${'$'}exitFile) {
-    ${'$'}code = (Get-Content ${'$'}exitFile -Raw).Trim()
+    ${'$'}code = (Get-Content ${'$'}exitFile -Raw -ErrorAction SilentlyContinue).Trim()
+    Remove-Item ${'$'}exitFile -Force -ErrorAction SilentlyContinue
     exit [int]${'$'}code
 }
 exit 0
 """
 
         fun generateRfBash(): String = """#!/usr/bin/env bash
-DIR="${'$'}(cd "${'$'}(dirname "${'$'}{BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-PORT_FILE="${'$'}DIR/.remote-flow.port"
-EXIT_FILE="${'$'}DIR/.remote-flow.exitcode"
+RF_DIR="${'$'}{HOME}/.remote-flow"
+STATE_DIR="${'$'}{RF_DIR}/state"
+CUR_DIR="$(pwd)"
+PORT=""
 
-if [ ! -f "${'$'}PORT_FILE" ]; then
-    echo "[Remote Flow] Error: IntelliJ IDEA Remote Flow bridge is not running."
-    exit 1
+if [ -d "${'$'}STATE_DIR" ]; then
+    for f in "${'$'}STATE_DIR"/project_*.properties; do
+        [ -e "${'$'}f" ] || continue
+        P_PATH=$(grep "^PROJECT_PATH=" "${'$'}f" | cut -d'=' -f2-)
+        P_PORT=$(grep "^PORT=" "${'$'}f" | cut -d'=' -f2-)
+        if [[ "${'$'}CUR_DIR" == "${'$'}P_PATH"* ]]; then
+            PORT="${'$'}P_PORT"
+            break
+        fi
+    done
+    if [ -z "${'$'}PORT" ]; then
+        for f in "${'$'}STATE_DIR"/project_*.properties; do
+            [ -e "${'$'}f" ] || continue
+            PORT=$(grep "^PORT=" "${'$'}f" | cut -d'=' -f2-)
+            break
+        done
+    fi
 fi
 
-PORT=${'$'}(cat "${'$'}PORT_FILE" | tr -d ' \r\n')
+if [ -z "${'$'}PORT" ] && [ -f "$(pwd)/.remote-flow.port" ]; then
+    PORT=$(cat "$(pwd)/.remote-flow.port" | tr -d ' \r\n')
+fi
+
+[ -z "${'$'}PORT" ] && PORT="45789"
+
+EXIT_FILE="${'$'}STATE_DIR/exitcode_${'$'}PORT.txt"
 rm -f "${'$'}EXIT_FILE" 2>/dev/null
+
+if ! curl -s --connect-timeout 2 "http://127.0.0.1:${'$'}PORT/api/status" >/dev/null 2>&1; then
+    echo "[Remote Flow] Error: IntelliJ IDEA Remote Flow bridge is not running on port ${'$'}PORT."
+    echo "Please ensure IntelliJ IDEA is open with Remote Flow active."
+    exit 1
+fi
 
 ACTION="${'$'}{1:-status}"
 case "${'$'}ACTION" in
@@ -595,7 +803,8 @@ case "${'$'}ACTION" in
 esac
 
 if [ -f "${'$'}EXIT_FILE" ]; then
-    CODE=${'$'}(cat "${'$'}EXIT_FILE" | tr -d ' \r\n')
+    CODE=$(cat "${'$'}EXIT_FILE" | tr -d ' \r\n')
+    rm -f "${'$'}EXIT_FILE" 2>/dev/null
     exit "${'$'}CODE"
 fi
 exit 0

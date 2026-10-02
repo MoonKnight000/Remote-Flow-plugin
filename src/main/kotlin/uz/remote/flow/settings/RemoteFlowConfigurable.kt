@@ -71,6 +71,9 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
     private val browserUrlField = JBTextField()
 
     private val autoReconnectCheck = JBCheckBox("Auto-Reconnect & Keep-Alive", true)
+    private val chkEnableAgentBridge = JBCheckBox("🤖 Enable AI Agent Bridge & Global CLI (rf in ~/.remote-flow/bin)", true).apply {
+        toolTipText = "Provides global 'rf' CLI command for AI Coding Agents and terminal users. Zero files are placed in your project directory."
+    }
     private val btnTestConnection = JButton("Test Connection", AllIcons.Actions.Execute)
 
     private lateinit var portsTableModel: DefaultTableModel
@@ -505,11 +508,25 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(browserPanel, gbc)
         gbc.gridwidth = 1
 
-        // Row 15: Buttons
+        // Row 15: AI Agent Bridge & Clean Files
+        val aiBridgePanel = JPanel(BorderLayout(8, 0))
+        aiBridgePanel.add(chkEnableAgentBridge, BorderLayout.WEST)
+        val btnCleanProject = JButton("🧹 Clean Project Files", AllIcons.Actions.GC).apply {
+            toolTipText = "Remove any legacy .remote-flow.port, rf, rf.cmd, rf.ps1, or agent rules from project root"
+            addActionListener {
+                uz.remote.flow.agent.RemoteFlowAgentBridgeService.getInstance(project).cleanLegacyProjectFiles()
+                Messages.showInfoMessage(project, "Cleaned any legacy Remote Flow files from the project workspace. Project codes are clean!", "Clean Project Files")
+            }
+        }
+        aiBridgePanel.add(btnCleanProject, BorderLayout.EAST)
+        gbc.gridx = 0; gbc.gridy = 15; gbc.gridwidth = 4; gbc.weightx = 1.0
+        form.add(aiBridgePanel, gbc)
+
+        // Row 16: Buttons
         val btnRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
         btnRow.add(btnTestConnection)
         btnRow.add(autoReconnectCheck)
-        gbc.gridx = 0; gbc.gridy = 15; gbc.gridwidth = 4; gbc.weightx = 1.0
+        gbc.gridx = 0; gbc.gridy = 16; gbc.gridwidth = 4; gbc.weightx = 1.0
         form.add(btnRow, gbc)
 
         // Ports Table
@@ -731,6 +748,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         }
         if (settings.autoReconnect != autoReconnectCheck.isSelected) return true
         if (settings.routeStandardRunToRemote != chkRouteStandardRun.isSelected) return true
+        if (settings.enableAgentBridge != chkEnableAgentBridge.isSelected) return true
         if (settings.profiles.size != workingProfiles.size) return true
         if (settings.profiles.isNotEmpty() && settings.activeProfileIndex != selectedIndex) return true
         for (i in workingProfiles.indices) {
@@ -766,6 +784,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         } else 0
         settings.autoReconnect = autoReconnectCheck.isSelected
         settings.routeStandardRunToRemote = chkRouteStandardRun.isSelected
+        settings.enableAgentBridge = chkEnableAgentBridge.isSelected
 
         val activeP = settings.activeProfileOrNull
         if (activeP != null && activeP.remoteProjectPath.isNotBlank() && connectionManager.isConnected) {
@@ -787,6 +806,7 @@ class RemoteFlowConfigurable(private val project: Project) : Configurable {
         resetWorkingCopy()
         chkRouteStandardRun.isSelected = settings.routeStandardRunToRemote
         autoReconnectCheck.isSelected = settings.autoReconnect
+        chkEnableAgentBridge.isSelected = settings.enableAgentBridge
         if (workingProfiles.isNotEmpty()) {
             profileList.selectedIndex = selectedIndex
             loadProfileToForm(workingProfiles[selectedIndex])
