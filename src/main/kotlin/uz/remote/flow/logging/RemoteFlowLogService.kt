@@ -18,7 +18,8 @@ enum class LogCategory(val displayName: String, val badge: String) {
     RUN("Run & Debug", "[RUN]"),
     PORT("Port Forwarding", "[PORT]"),
     SSH("SSH & System", "[SSH]"),
-    FILES("Remote Files", "[FILES]");
+    FILES("Remote Files", "[FILES]"),
+    AI("AI Agent", "[AI]");
 
     override fun toString(): String = displayName
 }
@@ -182,6 +183,7 @@ class RemoteFlowLogService(private val project: Project) {
                     LogCategory.PORT -> ConsoleViewContentType.LOG_INFO_OUTPUT
                     LogCategory.SSH -> ConsoleViewContentType.SYSTEM_OUTPUT
                     LogCategory.FILES -> ConsoleViewContentType.LOG_INFO_OUTPUT
+                    LogCategory.AI -> ConsoleViewContentType.USER_INPUT
                     else -> ConsoleViewContentType.NORMAL_OUTPUT
                 }
                 consoleView.print(categoryStr, catContentType)
@@ -204,7 +206,7 @@ class RemoteFlowLogService(private val project: Project) {
                 rawMsg.contains("[ERROR]") || rawMsg.contains(" ERROR ") || rawMsg.contains("FATAL") || rawMsg.contains("Exception") || rawMsg.contains("FAILED") -> ConsoleViewContentType.ERROR_OUTPUT
                 rawMsg.contains("[WARNING]") || rawMsg.contains("[WARN]") || rawMsg.contains(" WARN ") -> ConsoleViewContentType.LOG_WARNING_OUTPUT
                 rawMsg.contains("[SUCCESS]") || rawMsg.contains("[SYNC SUCCESS]") || rawMsg.contains("BUILD SUCCESSFUL") || rawMsg.contains("Started ") || rawMsg.contains("[APP READY]") -> ConsoleViewContentType.USER_INPUT
-                rawMsg.contains("[REMOTE RUN]") || rawMsg.contains("[REMOTE DEBUG]") || rawMsg.contains("[PORT") || rawMsg.contains("[GIT") || rawMsg.contains("[AUTO-SYNC") || rawMsg.contains("[SYNC") -> ConsoleViewContentType.LOG_INFO_OUTPUT
+                rawMsg.contains("[REMOTE RUN]") || rawMsg.contains("[REMOTE DEBUG]") || rawMsg.contains("[PORT") || rawMsg.contains("[GIT") || rawMsg.contains("[AUTO-SYNC") || rawMsg.contains("[SYNC") || rawMsg.contains("[AI") -> ConsoleViewContentType.LOG_INFO_OUTPUT
                 else -> ConsoleViewContentType.NORMAL_OUTPUT
             }
             consoleView.print(rawMsg, contentType)

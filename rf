@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+PORT_FILE="$DIR/.remote-flow.port"
+EXIT_FILE="$DIR/.remote-flow.exitcode"
+
+if [ ! -f "$PORT_FILE" ]; then
+    echo "[Remote Flow] Error: IntelliJ IDEA Remote Flow bridge is not running."
+    exit 1
+fi
+
+PORT=$(cat "$PORT_FILE" | tr -d ' \r\n')
+rm -f "$EXIT_FILE" 2>/dev/null
+
+ACTION="${1:-status}"
+case "$ACTION" in
+    test|build|sync)
+        curl -s -N -X POST "http://127.0.0.1:$PORT/api/$ACTION"
+        ;;
+    status)
+        curl -s "http://127.0.0.1:$PORT/api/status"
+        echo ""
+        ;;
+    exec)
+        shift
+        curl -s -N -X POST "http://127.0.0.1:$PORT/api/exec" --data-binary "$*"
+        ;;
+    *)
+        echo "Usage: rf <test|build|sync|exec <cmd>|status>"
+        exit 1
+        ;;
+esac
+
+if [ -f "$EXIT_FILE" ]; then
+    CODE=$(cat "$EXIT_FILE" | tr -d ' \r\n')
+    exit "$CODE"
+fi
+exit 0

@@ -53,6 +53,8 @@ class ServerProfileEditDialog(
     private val btnAutoDetectJava = JButton("Auto", AllIcons.Actions.Search)
     private val runCommandField = JBTextField(profile.runCommand)
     private val debugCommandField = JBTextField(profile.debugCommand)
+    private val testCommandField = JBTextField(profile.testCommand.ifBlank { "./gradlew test" })
+    private val buildCommandField = JBTextField(profile.buildCommand.ifBlank { "./gradlew build -x test" })
 
     private val envBox = JComboBox(arrayOf("DEV (Development)", "STAGING (Pre-production)", "PRODUCTION (Live Protected)"))
     private val chkConfirmProduction = com.intellij.ui.components.JBCheckBox("⚠️ Confirm all destructive actions on Production (Run, Stop, Sync)", profile.confirmOnProduction)
@@ -125,6 +127,8 @@ class ServerProfileEditDialog(
         rsyncPathField.text = profile.rsyncPath
         javaHomeField.text = profile.javaHome
         chkAutoSyncOnSave.isSelected = profile.autoSyncOnSave
+        testCommandField.text = profile.testCommand.ifBlank { "./gradlew test" }
+        buildCommandField.text = profile.buildCommand.ifBlank { "./gradlew build -x test" }
 
         envBox.selectedIndex = when (profile.environment) {
             uz.remote.flow.ssh.ServerEnvironment.DEV -> 0
@@ -140,7 +144,7 @@ class ServerProfileEditDialog(
 
     override fun createCenterPanel(): JComponent {
         val root = JPanel(BorderLayout(0, 10))
-        root.preferredSize = Dimension(560, 480)
+        root.preferredSize = Dimension(580, 540)
         root.border = JBUI.Borders.empty(10)
 
         // Setup CardLayout for credentials
@@ -397,20 +401,32 @@ class ServerProfileEditDialog(
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(debugCommandField, gbc)
         gbc.gridwidth = 1
 
-        // Row 12: Pre-Run Hook
-        gbc.gridx = 0; gbc.gridy = 12; gbc.weightx = 0.0; form.add(JBLabel("Pre-Run Hook:"), gbc)
+        // Row 12: Test Command (for AI & CLI)
+        gbc.gridx = 0; gbc.gridy = 12; gbc.weightx = 0.0; form.add(JBLabel("Test Command:"), gbc)
+        testCommandField.emptyText.text = "./gradlew test"
+        gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(testCommandField, gbc)
+        gbc.gridwidth = 1
+
+        // Row 13: Build Command (for AI & CLI)
+        gbc.gridx = 0; gbc.gridy = 13; gbc.weightx = 0.0; form.add(JBLabel("Build Command:"), gbc)
+        buildCommandField.emptyText.text = "./gradlew build -x test"
+        gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(buildCommandField, gbc)
+        gbc.gridwidth = 1
+
+        // Row 14: Pre-Run Hook
+        gbc.gridx = 0; gbc.gridy = 14; gbc.weightx = 0.0; form.add(JBLabel("Pre-Run Hook:"), gbc)
         preRunCommandField.emptyText.text = "Optional bash command before build (e.g., npm run build, ./mvnw compile)"
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(preRunCommandField, gbc)
         gbc.gridwidth = 1
 
-        // Row 13: Post-Run Hook
-        gbc.gridx = 0; gbc.gridy = 13; gbc.weightx = 0.0; form.add(JBLabel("Post-Run Hook:"), gbc)
+        // Row 15: Post-Run Hook
+        gbc.gridx = 0; gbc.gridy = 15; gbc.weightx = 0.0; form.add(JBLabel("Post-Run Hook:"), gbc)
         postRunCommandField.emptyText.text = "Optional bash command when app becomes ready"
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(postRunCommandField, gbc)
         gbc.gridwidth = 1
 
-        // Row 14: Browser Auto-Open
-        gbc.gridx = 0; gbc.gridy = 14; gbc.weightx = 0.0; form.add(chkOpenBrowser, gbc)
+        // Row 16: Browser Auto-Open
+        gbc.gridx = 0; gbc.gridy = 16; gbc.weightx = 0.0; form.add(chkOpenBrowser, gbc)
         val browserPanel = JPanel(BorderLayout(4, 0))
         browserUrlField.emptyText.text = "http://localhost:8080"
         browserPanel.add(JBLabel("URL: "), BorderLayout.WEST)
@@ -418,15 +434,15 @@ class ServerProfileEditDialog(
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(browserPanel, gbc)
         gbc.gridwidth = 1
 
-        // Row 15: Production Safety & Auto-Sync
-        gbc.gridx = 0; gbc.gridy = 15; gbc.gridwidth = 4; gbc.weightx = 1.0
+        // Row 17: Production Safety & Auto-Sync
+        gbc.gridx = 0; gbc.gridy = 17; gbc.gridwidth = 4; gbc.weightx = 1.0
         val flagsPanel = JPanel(GridLayout(2, 1, 0, 2))
         flagsPanel.add(chkConfirmProduction)
         flagsPanel.add(chkAutoSyncOnSave)
         form.add(flagsPanel, gbc)
 
-        // Row 16: Test Button
-        gbc.gridx = 0; gbc.gridy = 16; gbc.gridwidth = 4; gbc.weightx = 1.0
+        // Row 18: Test Button
+        gbc.gridx = 0; gbc.gridy = 18; gbc.gridwidth = 4; gbc.weightx = 1.0
         val btnP = JPanel(FlowLayout(FlowLayout.LEFT, 0, 4))
         btnP.add(btnTestConn)
         form.add(btnP, gbc)
@@ -450,6 +466,8 @@ class ServerProfileEditDialog(
         p.javaHome = javaHomeField.text.trim()
         p.runCommand = runCommandField.text.trim()
         p.debugCommand = debugCommandField.text.trim()
+        p.testCommand = testCommandField.text.trim().ifBlank { "./gradlew test" }
+        p.buildCommand = buildCommandField.text.trim().ifBlank { "./gradlew build -x test" }
         p.autoSyncOnSave = chkAutoSyncOnSave.isSelected
 
         p.environment = when (envBox.selectedIndex) {

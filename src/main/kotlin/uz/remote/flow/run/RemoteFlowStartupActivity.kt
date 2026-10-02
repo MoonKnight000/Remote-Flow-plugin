@@ -12,6 +12,7 @@ class RemoteFlowStartupActivity : ProjectActivity {
         ApplicationManager.getApplication().invokeLater {
             if (!project.isDisposed) {
                 ensureDefaultRunConfiguration(project)
+                uz.remote.flow.agent.RemoteFlowAgentBridgeService.getInstance(project).start()
             }
         }
     }

@@ -298,6 +298,25 @@ class RemoteConnectionManager(private val project: Project) {
         }
     }
 
+    fun ensureConnected(
+        profile: ServerProfile = config.activeProfile,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        if (isConnected) {
+            onResult(true, "")
+            return
+        }
+        if (profile.host.isBlank()) {
+            onResult(false, "No active remote server host configured.")
+            return
+        }
+        connect(
+            profile = profile,
+            onSuccess = { onResult(true, "") },
+            onError = { err -> onResult(false, err.message ?: err.toString()) }
+        )
+    }
+
     private fun startKeepAliveWatchdog() {
         heartbeatTask?.cancel(true)
         heartbeatTask = scheduler.scheduleAtFixedRate({
@@ -535,6 +554,90 @@ class RemoteConnectionManager(private val project: Project) {
         onOutput: (String) -> Unit,
         onComplete: (Int) -> Unit
     ) = executeRemoteCommand(cmd, workingDir, false, onOutput, onComplete)
+
+    fun executeStreamingCommand(
+        cmd: String,
+        workingDir: String = config.activeProfile.remoteProjectPath,
+        timeoutSeconds: Long = 600,
+        onOutput: (String) -> Unit,
+        onComplete: (Int) -> Unit
+    ): () -> Unit {
+        var isCancelled = false
+        var currentSession: net.schmizz.sshj.connection.channel.direct.Session? = null
+        var currentCommand: net.schmizz.sshj.connection.channel.direct.Session.Command? = null
+
+        val cancelHandle: () -> Unit = {
+            isCancelled = true
+            try { currentCommand?.outputStream?.write(3) } catch (_: Exception) {}
+            try { currentCommand?.outputStream?.flush() } catch (_: Exception) {}
+            try { currentCommand?.close() } catch (_: Exception) {}
+            try { currentSession?.close() } catch (_: Exception) {}
+        }
+
+        executor.submit {
+            val client = sshClient
+            if (client == null || !client.isConnected) {
+                onOutput("[ERROR] SSH connection is not open. Connect to server first!\n")
+                onComplete(-1)
+                return@submit
+            }
+
+            try {
+                val fullCmd = if (workingDir.isNotBlank()) "cd \"$workingDir\" && $cmd" else cmd
+                val session = client.startSession()
+                currentSession = session
+
+                val command = session.exec(fullCmd)
+                currentCommand = command
+
+                // Close remote stdin immediately so non-interactive tools don't hang
+                try { command.outputStream.close() } catch (_: Exception) {}
+
+                // Drain stderr in background thread
+                val errFuture = executor.submit {
+                    try {
+                        BufferedReader(InputStreamReader(command.errorStream, java.nio.charset.StandardCharsets.UTF_8)).use { errReader ->
+                            var errLine: String?
+                            while (errReader.readLine().also { errLine = it } != null) {
+                                val text = errLine ?: ""
+                                onOutput(text + "\n")
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                // Drain stdout
+                BufferedReader(InputStreamReader(command.inputStream, java.nio.charset.StandardCharsets.UTF_8)).use { reader ->
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        val text = line ?: ""
+                        onOutput(text + "\n")
+                    }
+                }
+
+                try { errFuture.get(2, TimeUnit.SECONDS) } catch (_: Exception) {}
+                if (timeoutSeconds > 0) {
+                    try {
+                        command.join(timeoutSeconds, TimeUnit.SECONDS)
+                    } catch (_: Exception) {}
+                } else {
+                    command.join()
+                }
+
+                val exitStatus = if (isCancelled) -1 else (command.exitStatus ?: 0)
+                onComplete(exitStatus)
+            } catch (e: Exception) {
+                if (!isCancelled) {
+                    onOutput("[ERROR]: " + (e.message ?: e.toString()) + "\n")
+                    onComplete(-1)
+                }
+            } finally {
+                try { currentSession?.close() } catch (_: Exception) {}
+            }
+        }
+
+        return cancelHandle
+    }
 
     fun executeRemoteCommand(
         cmd: String,

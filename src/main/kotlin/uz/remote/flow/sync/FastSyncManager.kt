@@ -195,6 +195,12 @@ class FastSyncManager(private val project: Project) {
         }
     }
 
+    fun syncNow(
+        profile: ServerProfile = connectionManager.config.activeProfile,
+        onLog: (String) -> Unit = {},
+        onComplete: (Boolean) -> Unit = {}
+    ) = syncSingleServer(profile, onLog, onComplete)
+
     fun syncSingleServer(
         profile: ServerProfile = connectionManager.config.activeProfile,
         onLog: (String) -> Unit,
