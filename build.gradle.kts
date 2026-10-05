@@ -33,6 +33,10 @@ intellijPlatform {
     pluginConfiguration {
         name = "Remote Flow"
         version = "1.0.0"
+        ideaVersion {
+            sinceBuild = "242"
+            untilBuild = provider { null }
+        }
         vendor {
             name = "Murodjon"
             email = "murodjonbobobekov000@gmail.com"
