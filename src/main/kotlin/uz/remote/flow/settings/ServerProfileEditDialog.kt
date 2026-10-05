@@ -1,8 +1,14 @@
 package uz.remote.flow.settings
 
 import com.intellij.icons.AllIcons
+import com.intellij.notification.Notification
+import com.intellij.notification.NotificationType
+import com.intellij.notification.Notifications
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
@@ -17,6 +23,9 @@ import uz.remote.flow.ssh.RemoteConnectionManager
 import uz.remote.flow.ssh.ServerProfile
 import uz.remote.flow.ui.RemoteDirectoryChooserDialog
 import java.awt.*
+import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import javax.swing.*
 
 class ServerProfileEditDialog(
@@ -35,7 +44,7 @@ class ServerProfileEditDialog(
     private val passwordField = JBPasswordField()
     private val keyPathField = TextFieldWithBrowseButton()
 
-    private val credentialLabel = JBLabel("Password:")
+    private val credentialLabel = JBLabel("Password: *")
     private val credentialCardLayout = CardLayout()
     private val credentialCardPanel = JPanel(credentialCardLayout)
 
@@ -70,9 +79,16 @@ class ServerProfileEditDialog(
     }
     private val autoSyncDelayField = JBTextField(profile.autoSyncDelayMs.toString(), 5)
     private val btnTestConn = JButton("Test Connection", AllIcons.Actions.Execute)
+    private val lblTestStatus = JBLabel("").apply {
+        font = com.intellij.util.ui.JBUI.Fonts.smallFont()
+    }
 
     init {
         title = if (isNew) "Add New Server Profile" else "Edit Server Profile: " + profile.name
+        nameField.emptyText.text = "e.g. My Remote Server (Optional)"
+        hostField.emptyText.text = "e.g. 192.168.1.100 or myserver.com (Required)"
+        userField.emptyText.text = "e.g. root or ubuntu (Required, default: root)"
+        remotePathField.emptyText.text = "e.g. /root/remote-flow/myapp (Optional)"
         init()
         loadValues()
     }
@@ -144,6 +160,7 @@ class ServerProfileEditDialog(
         browserUrlField.text = profile.browserUrl.ifBlank { "http://localhost:8080" }
         preRunCommandField.text = profile.preRunCommand
         postRunCommandField.text = profile.postRunCommand
+        lblTestStatus.text = ""
     }
 
     override fun createCenterPanel(): JComponent {
@@ -161,7 +178,7 @@ class ServerProfileEditDialog(
 
         authTypeBox.addActionListener {
             val isKey = authTypeBox.selectedIndex == 1
-            credentialLabel.text = if (isKey) "Private Key:" else "Password:"
+            credentialLabel.text = if (isKey) "Private Key: *" else "Password: *"
             credentialCardLayout.show(credentialCardPanel, if (isKey) "KEY" else "PASSWORD")
         }
 
@@ -254,24 +271,158 @@ class ServerProfileEditDialog(
         btnTestConn.addActionListener {
             val temp = profile.copyProfile()
             applyToProfile(temp)
-            val targetRemote = remotePathField.text.trim()
 
-            connectionManager.testConnection(temp, checkRemoteDir = targetRemote) { ok, dirExists, msg ->
-                ApplicationManager.getApplication().invokeLater {
-                    if (!ok) {
-                        Messages.showErrorDialog(project, msg, "Connection Error")
-                        return@invokeLater
-                    }
+            val (cleanH, cleanP) = uz.remote.flow.ssh.sanitizeServerHostAndPort(temp.host, temp.port)
+            temp.host = cleanH
+            temp.port = cleanP
+            hostField.text = cleanH
+            portField.text = cleanP.toString()
 
-                    if (targetRemote.isNotBlank() && !dirExists) {
-                        promptCreateRemoteDir(temp, targetRemote)
-                    } else if (targetRemote.isNotBlank()) {
-                        Messages.showInfoMessage(project, "$msg\n\nRemote directory exists: $targetRemote", "Connection Successful")
-                    } else {
-                        Messages.showInfoMessage(project, msg, "Connection Successful")
-                    }
+            val rawHost = hostField.text.trim()
+            if (temp.user.isBlank() && rawHost.contains("@")) {
+                val extractedUser = rawHost.substringBefore('@').trim()
+                if (extractedUser.isNotBlank()) {
+                    temp.user = extractedUser
+                    userField.text = extractedUser
                 }
             }
+            if (temp.user.isBlank()) {
+                temp.user = "root"
+                userField.text = "root"
+            }
+
+            val targetRemote = remotePathField.text.trim()
+
+            if (temp.host.isBlank()) {
+                lblTestStatus.text = "✗ Server Host IP / Domain is required"
+                lblTestStatus.foreground = com.intellij.ui.JBColor.RED
+                Messages.showWarningDialog(contentPane, "Please enter the Server Host IP or domain first.\nRequired fields: Host IP, Username, and Password or Key.", "Host Missing")
+                hostField.requestFocus()
+                return@addActionListener
+            }
+            if (temp.authType == AuthType.PRIVATE_KEY && temp.privateKeyPath.isBlank()) {
+                lblTestStatus.text = "✗ SSH Private Key file is required"
+                lblTestStatus.foreground = com.intellij.ui.JBColor.RED
+                Messages.showWarningDialog(contentPane, "Please select an SSH Private Key file (.pem / id_rsa).", "Key Missing")
+                return@addActionListener
+            }
+
+            val authDesc = if (temp.authType == AuthType.PRIVATE_KEY) "SSH Key (${File(temp.privateKeyPath).name})" else "Password"
+            val attemptMsg = "Connecting to ${temp.host}:${temp.port} as '${temp.user}' via $authDesc..."
+
+            btnTestConn.isEnabled = false
+            btnTestConn.text = "Connecting..."
+            btnTestConn.icon = AllIcons.Actions.Refresh
+            lblTestStatus.text = attemptMsg
+            lblTestStatus.foreground = com.intellij.ui.JBColor.GRAY
+
+            try {
+                Notifications.Bus.notify(
+                    Notification(
+                        "Remote Flow",
+                        "Remote Flow: Testing Connection",
+                        "Connecting to ${temp.host}:${temp.port} as '${temp.user}' via $authDesc (timeout: 7s)...",
+                        NotificationType.INFORMATION
+                    ),
+                    project
+                )
+            } catch (_: Throwable) {}
+
+            ProgressManager.getInstance().run(
+                object : Task.Modal(project, "Testing SSH Connection: ${temp.host}:${temp.port}", true) {
+                    var isSuccess = false
+                    var remoteDirOk = false
+                    var resultMsg = ""
+
+                    override fun run(indicator: ProgressIndicator) {
+                        indicator.isIndeterminate = true
+                        indicator.text = "Connecting to ${temp.host}:${temp.port} as '${temp.user}'..."
+                        indicator.text2 = "Initiating TCP handshake via port ${temp.port} (timeout 7s)..."
+
+                        val latch = CountDownLatch(1)
+
+                        connectionManager.testConnection(
+                            profile = temp,
+                            checkRemoteDir = targetRemote,
+                            onProgress = { progressText ->
+                                indicator.text2 = progressText
+                                ApplicationManager.getApplication().invokeLater {
+                                    lblTestStatus.text = progressText
+                                }
+                            }
+                        ) { ok, dirExists, msg ->
+                            isSuccess = ok
+                            remoteDirOk = dirExists
+                            resultMsg = msg
+                            latch.countDown()
+                        }
+
+                        while (!latch.await(150, TimeUnit.MILLISECONDS)) {
+                            if (indicator.isCanceled) {
+                                resultMsg = "Connection test cancelled by user."
+                                isSuccess = false
+                                break
+                            }
+                        }
+                    }
+
+                    override fun onSuccess() {
+                        finish()
+                    }
+
+                    override fun onCancel() {
+                        finish()
+                    }
+
+                    private fun finish() {
+                        btnTestConn.isEnabled = true
+                        btnTestConn.text = "Test Connection"
+                        btnTestConn.icon = AllIcons.Actions.Execute
+
+                        if (!isSuccess) {
+                            lblTestStatus.text = "✗ $resultMsg"
+                            lblTestStatus.foreground = com.intellij.ui.JBColor.RED
+
+                            val detailedMsg = buildString {
+                                appendLine("❌ Failed to connect to server!")
+                                appendLine()
+                                appendLine("Connection parameters attempted:")
+                                appendLine("• Host IP: ${temp.host}")
+                                appendLine("• Port: ${temp.port}")
+                                appendLine("• Username: ${temp.user}")
+                                appendLine("• Auth Type: $authDesc")
+                                appendLine()
+                                appendLine("Diagnosis / Reason:")
+                                appendLine(resultMsg)
+                            }
+                            Messages.showErrorDialog(contentPane, detailedMsg, "Connection Failed")
+                            return
+                        }
+
+                        lblTestStatus.text = "✓ $resultMsg"
+                        lblTestStatus.foreground = com.intellij.ui.JBColor(java.awt.Color(0, 140, 0), java.awt.Color(98, 181, 67))
+
+                        val detailedMsg = buildString {
+                            appendLine("✅ Server connection successful!")
+                            appendLine()
+                            appendLine("Connection details:")
+                            appendLine("• Host: ${temp.host}:${temp.port}")
+                            appendLine("• Username: ${temp.user}")
+                            appendLine("• Auth Type: $authDesc")
+                            appendLine("• Result: $resultMsg")
+                            if (targetRemote.isNotBlank()) {
+                                appendLine("• Remote Directory: $targetRemote (${if (remoteDirOk) "Exists" else "Not found on server"})")
+                            }
+                        }
+
+                        if (targetRemote.isNotBlank() && !remoteDirOk) {
+                            promptCreateRemoteDir(temp, targetRemote)
+                        } else {
+                            Messages.showInfoMessage(contentPane, detailedMsg, "Connection Successful")
+                        }
+                    }
+                }
+            )
         }
 
         val form = JPanel(GridBagLayout())
@@ -287,7 +438,7 @@ class ServerProfileEditDialog(
         gbc.gridx = 3; gbc.weightx = 0.4; form.add(envBox, gbc)
 
         // Row 1: Host & Port
-        gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.0; form.add(JBLabel("Host IP:"), gbc)
+        gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.0; form.add(JBLabel("Host IP: *"), gbc)
         gbc.gridx = 1; gbc.weightx = 0.7; form.add(hostField, gbc)
         gbc.gridx = 2; gbc.weightx = 0.0; form.add(JBLabel("Port:"), gbc)
         gbc.gridx = 3; gbc.weightx = 0.3; form.add(portField, gbc)
@@ -298,7 +449,7 @@ class ServerProfileEditDialog(
         gbc.gridwidth = 1
 
         // Row 3: Username
-        gbc.gridx = 0; gbc.gridy = 3; gbc.weightx = 0.0; form.add(JBLabel("Username:"), gbc)
+        gbc.gridx = 0; gbc.gridy = 3; gbc.weightx = 0.0; form.add(JBLabel("Username: *"), gbc)
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(userField, gbc)
         gbc.gridwidth = 1
 
@@ -450,22 +601,49 @@ class ServerProfileEditDialog(
         flagsPanel.add(delayPanel)
         form.add(flagsPanel, gbc)
 
-        // Row 18: Test Button
+        // Row 18: Test Button & Note
         gbc.gridx = 0; gbc.gridy = 18; gbc.gridwidth = 4; gbc.weightx = 1.0
-        val btnP = JPanel(FlowLayout(FlowLayout.LEFT, 0, 4))
+        val btnP = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
         btnP.add(btnTestConn)
+        val lblMandatoryNote = JBLabel("(* = Host IP, Username, and Password/Key are required)").apply {
+            font = font.deriveFont(Font.ITALIC, 11f)
+            foreground = com.intellij.ui.JBColor.GRAY
+        }
+        btnP.add(lblMandatoryNote)
         form.add(btnP, gbc)
 
-        root.add(form, BorderLayout.CENTER)
+        // Row 19: Live Test Status
+        gbc.gridx = 0; gbc.gridy = 19; gbc.gridwidth = 4; gbc.weightx = 1.0
+        val statusP = JPanel(BorderLayout(4, 0))
+        statusP.add(lblTestStatus, BorderLayout.CENTER)
+        form.add(statusP, gbc)
+
+        val scroll = com.intellij.ui.components.JBScrollPane(form).apply {
+            border = JBUI.Borders.empty()
+        }
+        root.add(scroll, BorderLayout.CENTER)
         return root
     }
 
+    override fun doValidate(): com.intellij.openapi.ui.ValidationInfo? {
+        val (cleanH, _) = uz.remote.flow.ssh.sanitizeServerHostAndPort(hostField.text.trim(), 22)
+        if (cleanH.isBlank()) {
+            return com.intellij.openapi.ui.ValidationInfo("Server Host IP or domain is required.", hostField)
+        }
+        val isKey = authTypeBox.selectedIndex == 1
+        if (isKey && keyPathField.text.trim().isBlank()) {
+            return com.intellij.openapi.ui.ValidationInfo("SSH Private Key file is required.", keyPathField)
+        }
+        return super.doValidate()
+    }
+
     private fun applyToProfile(p: ServerProfile) {
+        val (cleanH, cleanP) = uz.remote.flow.ssh.sanitizeServerHostAndPort(hostField.text.trim(), portField.text.toIntOrNull() ?: 22)
         p.name = nameField.text.trim().ifBlank { "Server" }
-        p.host = hostField.text.trim()
-        p.port = portField.text.toIntOrNull() ?: 22
+        p.host = cleanH
+        p.port = cleanP
         p.authType = if (authTypeBox.selectedIndex == 1) AuthType.PRIVATE_KEY else AuthType.PASSWORD
-        p.user = userField.text.trim()
+        p.user = userField.text.trim().ifBlank { "root" }
         p.password = String(passwordField.password)
         p.privateKeyPath = keyPathField.text.trim()
         p.localProjectPath = localFolderField.text.trim()

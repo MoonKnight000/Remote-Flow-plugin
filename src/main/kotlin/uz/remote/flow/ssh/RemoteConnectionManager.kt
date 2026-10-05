@@ -4,12 +4,16 @@ import com.intellij.notification.Notification
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.connection.channel.direct.Parameters
 import net.schmizz.sshj.connection.channel.forwarded.RemotePortForwarder
 import net.schmizz.sshj.connection.channel.forwarded.SocketForwardingConnectListener
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
+import uz.remote.flow.logging.LogCategory
+import uz.remote.flow.logging.RemoteFlowLogService
+import java.io.File
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.InetSocketAddress
@@ -20,8 +24,32 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
+fun sanitizeServerHostAndPort(rawHost: String, rawPort: Int): Pair<String, Int> {
+    var h = rawHost.trim()
+    var p = if (rawPort in 1..65535) rawPort else 22
+    if (h.startsWith("ssh://", ignoreCase = true)) h = h.substring(6).trim()
+    if (h.startsWith("http://", ignoreCase = true)) h = h.substring(7).trim()
+    if (h.startsWith("https://", ignoreCase = true)) h = h.substring(8).trim()
+    if (h.startsWith("ssh ", ignoreCase = true)) h = h.substring(4).trim()
+    if (h.contains("@")) {
+        h = h.substringAfter('@').trim()
+    }
+    if (h.contains(":") && !h.startsWith("[")) {
+        val portStr = h.substringAfterLast(':').trim()
+        val parsedPort = portStr.toIntOrNull()
+        if (parsedPort != null && parsedPort in 1..65535) {
+            p = parsedPort
+            h = h.substringBeforeLast(':').trim()
+        }
+    }
+    return Pair(h, p)
+}
+
 @Service(Service.Level.PROJECT)
 class RemoteConnectionManager(private val project: Project) {
+
+    private val LOG = Logger.getInstance(RemoteConnectionManager::class.java)
+    private val logService get() = RemoteFlowLogService.getInstance(project)
 
     private var sshClient: SSHClient? = null
     private val executor = Executors.newCachedThreadPool()
@@ -62,6 +90,24 @@ class RemoteConnectionManager(private val project: Project) {
 
     fun getActiveSshClient(): SSHClient? = if (isConnected) sshClient else null
 
+    private fun createSshClient(connectTimeoutMs: Int = 7000, readTimeoutMs: Int = 10000): SSHClient {
+        return SSHClient().apply {
+            addHostKeyVerifier(PromiscuousVerifier())
+            connectTimeout = connectTimeoutMs
+            timeout = readTimeoutMs
+        }
+    }
+
+    private fun authenticateClient(client: SSHClient, profile: ServerProfile) {
+        when (profile.authType) {
+            AuthType.PASSWORD -> client.authPassword(profile.user, profile.password)
+            AuthType.PRIVATE_KEY -> {
+                val keyProvider = client.loadKeys(profile.privateKeyPath)
+                client.authPublickey(profile.user, keyProvider)
+            }
+        }
+    }
+
     fun <T> withSshClient(
         profile: ServerProfile = config.activeProfile,
         action: (client: SSHClient) -> T
@@ -73,19 +119,151 @@ class RemoteConnectionManager(private val project: Project) {
         var tempClient: SSHClient? = null
         return try {
             val client = active ?: run {
-                tempClient = SSHClient().apply {
-                    addHostKeyVerifier(PromiscuousVerifier())
+                tempClient = createSshClient(7000, 10000).apply {
                     connect(profile.host, profile.port)
-                    when (profile.authType) {
-                        AuthType.PASSWORD -> authPassword(profile.user, profile.password)
-                        AuthType.PRIVATE_KEY -> authPublickey(profile.user, loadKeys(profile.privateKeyPath))
-                    }
+                    authenticateClient(this, profile)
                 }
                 tempClient!!
             }
             action(client)
         } finally {
-            try { tempClient?.disconnect(); tempClient?.close() } catch (_: Exception) {}
+            try { tempClient?.disconnect(); tempClient?.close() } catch (_: Throwable) {}
+        }
+    }
+
+    fun testConnection(
+        profile: ServerProfile = config.activeProfile,
+        checkRemoteDir: String? = null,
+        onProgress: ((String) -> Unit)? = null,
+        onResult: (ok: Boolean, dirExists: Boolean, msg: String) -> Unit
+    ) {
+        val (cleanHost, cleanPort) = sanitizeServerHostAndPort(profile.host, profile.port)
+        val cleanUser = profile.user.trim().ifBlank { "root" }
+
+        LOG.info("[TEST-CONN] Starting test for profile '${profile.name}' -> user='$cleanUser', host='$cleanHost', port=$cleanPort, authType=${profile.authType}, keyPath='${profile.privateKeyPath}'")
+        logService.log("[SSH TEST] Starting connection test for profile '${profile.name}' ($cleanUser@$cleanHost:$cleanPort, Auth: ${profile.authType})...", LogCategory.SSH, profile.name)
+
+        if (cleanHost.isBlank()) {
+            val err = "Server Host IP / Domain is required."
+            LOG.warn("[TEST-CONN] Failed validation: $err")
+            onProgress?.invoke("✗ $err")
+            onResult(false, false, err)
+            return
+        }
+
+        if (profile.authType == AuthType.PRIVATE_KEY) {
+            if (profile.privateKeyPath.isBlank()) {
+                val err = "Please specify path to SSH Private Key file (.pem / id_rsa)."
+                LOG.warn("[TEST-CONN] Failed validation: $err")
+                onProgress?.invoke("✗ $err")
+                onResult(false, false, err)
+                return
+            }
+            val keyFile = File(profile.privateKeyPath)
+            if (!keyFile.exists() || !keyFile.isFile) {
+                val err = "SSH Private Key file not found: ${profile.privateKeyPath}"
+                LOG.warn("[TEST-CONN] Failed validation: $err")
+                onProgress?.invoke("✗ $err")
+                onResult(false, false, err)
+                return
+            }
+        }
+
+        onProgress?.invoke("1/3 Connecting to TCP socket $cleanHost:$cleanPort (timeout 7s)...")
+
+        executor.submit {
+            var tempClient: SSHClient? = null
+            val startTime = System.currentTimeMillis()
+            try {
+                // Ensure BouncyCastle provider is registered for modern OpenSSH / Ed25519 keys
+                try {
+                    if (java.security.Security.getProvider("BC") == null) {
+                        val bcClass = Class.forName("org.bouncycastle.jce.provider.BouncyCastleProvider")
+                        val bcProvider = bcClass.getDeclaredConstructor().newInstance() as java.security.Provider
+                        java.security.Security.addProvider(bcProvider)
+                    }
+                } catch (bce: Throwable) {
+                    LOG.warn("[TEST-CONN] BouncyCastle init notice: ${bce.message}")
+                }
+
+                tempClient = createSshClient(connectTimeoutMs = 7000, readTimeoutMs = 10000)
+
+                LOG.info("[TEST-CONN] Connecting socket to $cleanHost:$cleanPort (timeout=7000ms)...")
+                tempClient.connect(cleanHost, cleanPort)
+                val tcpDuration = System.currentTimeMillis() - startTime
+                val srvBanner = try { tempClient.transport.serverVersion ?: "SSH-2.0" } catch (_: Throwable) { "SSH-2.0" }
+                LOG.info("[TEST-CONN] Socket connected in ${tcpDuration}ms. Server banner: $srvBanner")
+
+                onProgress?.invoke("2/3 TCP connected (${tcpDuration}ms, $srvBanner). Authenticating '$cleanUser' via ${profile.authType}...")
+                logService.log("[SSH TEST] Socket connected in ${tcpDuration}ms. Server: $srvBanner. Authenticating user '$cleanUser'...", LogCategory.SSH, profile.name)
+
+                when (profile.authType) {
+                    AuthType.PASSWORD -> tempClient.authPassword(cleanUser, profile.password)
+                    AuthType.PRIVATE_KEY -> {
+                        val keyProvider = tempClient.loadKeys(profile.privateKeyPath)
+                        tempClient.authPublickey(cleanUser, keyProvider)
+                    }
+                }
+
+                val ok = tempClient.isConnected && tempClient.isAuthenticated
+                val totalDuration = System.currentTimeMillis() - startTime
+                LOG.info("[TEST-CONN] Auth result: isConnected=${tempClient.isConnected}, isAuthenticated=${tempClient.isAuthenticated} in ${totalDuration}ms")
+
+                var dirExists = true
+                if (ok && !checkRemoteDir.isNullOrBlank()) {
+                    onProgress?.invoke("3/3 Checking remote directory '$checkRemoteDir'...")
+                    try {
+                        val session = tempClient.startSession()
+                        val cmd = session.exec("test -d \"$checkRemoteDir\"")
+                        cmd.join(5, TimeUnit.SECONDS)
+                        dirExists = (cmd.exitStatus == 0)
+                        session.close()
+                        LOG.info("[TEST-CONN] Remote dir '$checkRemoteDir' exists: $dirExists (exitStatus=${cmd.exitStatus})")
+                    } catch (de: Throwable) {
+                        LOG.warn("[TEST-CONN] Remote dir check notice: ${de.message}")
+                        dirExists = false
+                    }
+                }
+
+                try { tempClient.disconnect(); tempClient.close() } catch (_: Throwable) {}
+
+                if (ok) {
+                    val successMsg = "Connected to $cleanHost:$cleanPort as '$cleanUser' in ${totalDuration}ms (Server: $srvBanner)"
+                    LOG.info("[TEST-CONN] $successMsg")
+                    logService.log("[SSH TEST SUCCESS] $successMsg", LogCategory.SSH, profile.name)
+                    onProgress?.invoke("✓ $successMsg")
+                    onResult(true, dirExists, successMsg)
+                } else {
+                    val authFail = "Authentication failed for user '$cleanUser' on $cleanHost:$cleanPort via ${profile.authType}. Server rejected credentials."
+                    LOG.warn("[TEST-CONN] $authFail")
+                    logService.log("[SSH TEST FAILED] $authFail", LogCategory.SSH, profile.name, isError = true)
+                    onProgress?.invoke("✗ $authFail")
+                    onResult(false, false, authFail)
+                }
+            } catch (t: Throwable) {
+                try { tempClient?.disconnect(); tempClient?.close() } catch (_: Throwable) {}
+                LOG.warn("[TEST-CONN EXCEPTION] Error connecting to $cleanHost:$cleanPort for user '$cleanUser': ${t.message}", t)
+
+                val errMsg = when {
+                    t is java.net.SocketTimeoutException ->
+                        "Connection timed out (7s). Host '$cleanHost:$cleanPort' is unreachable or port $cleanPort is firewalled."
+                    t is java.net.ConnectException ->
+                        "Connection refused by host '$cleanHost:$cleanPort' (SSH service is not running on port $cleanPort or firewall dropped connection)."
+                    t is java.net.UnknownHostException ->
+                        "Unknown host '$cleanHost'. Please check the IP address or domain name spelling."
+                    t is net.schmizz.sshj.userauth.UserAuthException ->
+                        "Authentication failed for user '$cleanUser' on $cleanHost:$cleanPort via ${profile.authType}. Server rejected credentials (check password or SSH private key)."
+                    t.message?.contains("PasswordFinder", ignoreCase = true) == true ->
+                        "Private key is encrypted with a passphrase. Please use an unencrypted private key file."
+                    t.message?.contains("Algorithm negotiation fail", ignoreCase = true) == true ->
+                        "SSH cipher/algorithm negotiation failed. Server and client do not share compatible algorithms."
+                    else -> "Failed to connect: " + (t.message ?: t.toString())
+                }
+
+                logService.log("[SSH TEST ERROR] $errMsg", LogCategory.SSH, profile.name, isError = true)
+                onProgress?.invoke("✗ $errMsg")
+                onResult(false, false, errMsg)
+            }
         }
     }
 
@@ -94,50 +272,11 @@ class RemoteConnectionManager(private val project: Project) {
         checkRemoteDir: String? = null,
         onResult: (ok: Boolean, dirExists: Boolean, msg: String) -> Unit
     ) {
-        executor.submit {
-            var tempClient: SSHClient? = null
-            try {
-                tempClient = SSHClient()
-                tempClient.addHostKeyVerifier(PromiscuousVerifier())
-                tempClient.connect(profile.host, profile.port)
-
-                when (profile.authType) {
-                    AuthType.PASSWORD -> tempClient.authPassword(profile.user, profile.password)
-                    AuthType.PRIVATE_KEY -> {
-                        val keyProvider = tempClient.loadKeys(profile.privateKeyPath)
-                        tempClient.authPublickey(profile.user, keyProvider)
-                    }
-                }
-
-                val ok = tempClient.isConnected && tempClient.isAuthenticated
-                var dirExists = true
-
-                if (ok && !checkRemoteDir.isNullOrBlank()) {
-                    try {
-                        val session = tempClient.startSession()
-                        val cmd = session.exec("test -d \"$checkRemoteDir\"")
-                        cmd.join(5, TimeUnit.SECONDS)
-                        dirExists = (cmd.exitStatus == 0)
-                        session.close()
-                    } catch (_: Exception) {
-                        dirExists = false
-                    }
-                }
-
-                tempClient.disconnect()
-                tempClient.close()
-
-                if (ok) onResult(true, dirExists, "Connection successful! Server ready: " + profile.name)
-                else onResult(false, false, "Authentication failed. Please check username/password or key.")
-            } catch (e: Exception) {
-                try { tempClient?.disconnect(); tempClient?.close() } catch (_: Exception) {}
-                onResult(false, false, "Failed to connect: " + (e.message ?: e.toString()))
-            }
-        }
+        testConnection(profile, checkRemoteDir, onProgress = null, onResult = onResult)
     }
 
     fun testConnection(profile: ServerProfile = config.activeProfile, onResult: (Boolean, String) -> Unit) {
-        testConnection(profile, checkRemoteDir = null) { ok, _, msg ->
+        testConnection(profile, checkRemoteDir = null, onProgress = null) { ok, _, msg ->
             onResult(ok, msg)
         }
     }
@@ -155,13 +294,9 @@ class RemoteConnectionManager(private val project: Project) {
             var tempClient: SSHClient? = null
             try {
                 val active = client ?: run {
-                    tempClient = SSHClient().apply {
-                        addHostKeyVerifier(PromiscuousVerifier())
+                    tempClient = createSshClient(7000, 10000).apply {
                         connect(profile.host, profile.port)
-                        when (profile.authType) {
-                            AuthType.PASSWORD -> authPassword(profile.user, profile.password)
-                            AuthType.PRIVATE_KEY -> authPublickey(profile.user, loadKeys(profile.privateKeyPath))
-                        }
+                        authenticateClient(this, profile)
                     }
                     tempClient!!
                 }
@@ -172,10 +307,10 @@ class RemoteConnectionManager(private val project: Project) {
                 val status = cmd.exitStatus ?: -1
                 session.close()
                 onResult(status == 0, null)
-            } catch (e: Exception) {
-                onResult(false, e.message ?: e.toString())
+            } catch (t: Throwable) {
+                onResult(false, t.message ?: t.toString())
             } finally {
-                try { tempClient?.disconnect(); tempClient?.close() } catch (_: Exception) {}
+                try { tempClient?.disconnect(); tempClient?.close() } catch (_: Throwable) {}
             }
         }
     }
@@ -193,13 +328,9 @@ class RemoteConnectionManager(private val project: Project) {
             var tempClient: SSHClient? = null
             try {
                 val active = client ?: run {
-                    tempClient = SSHClient().apply {
-                        addHostKeyVerifier(PromiscuousVerifier())
+                    tempClient = createSshClient(7000, 10000).apply {
                         connect(profile.host, profile.port)
-                        when (profile.authType) {
-                            AuthType.PASSWORD -> authPassword(profile.user, profile.password)
-                            AuthType.PRIVATE_KEY -> authPublickey(profile.user, loadKeys(profile.privateKeyPath))
-                        }
+                        authenticateClient(this, profile)
                     }
                     tempClient!!
                 }
@@ -210,10 +341,10 @@ class RemoteConnectionManager(private val project: Project) {
                 val status = cmd.exitStatus ?: -1
                 session.close()
                 onResult(status == 0, if (status == 0) null else "Server error: exit status $status")
-            } catch (e: Exception) {
-                onResult(false, e.message ?: e.toString())
+            } catch (t: Throwable) {
+                onResult(false, t.message ?: t.toString())
             } finally {
-                try { tempClient?.disconnect(); tempClient?.close() } catch (_: Exception) {}
+                try { tempClient?.disconnect(); tempClient?.close() } catch (_: Throwable) {}
             }
         }
     }
@@ -233,13 +364,9 @@ class RemoteConnectionManager(private val project: Project) {
             var tempClient: SSHClient? = null
             try {
                 val active = client ?: run {
-                    tempClient = SSHClient().apply {
-                        addHostKeyVerifier(PromiscuousVerifier())
+                    tempClient = createSshClient(7000, 10000).apply {
                         connect(profile.host, profile.port)
-                        when (profile.authType) {
-                            AuthType.PASSWORD -> authPassword(profile.user, profile.password)
-                            AuthType.PRIVATE_KEY -> authPublickey(profile.user, loadKeys(profile.privateKeyPath))
-                        }
+                        authenticateClient(this, profile)
                     }
                     tempClient!!
                 }
@@ -249,19 +376,19 @@ class RemoteConnectionManager(private val project: Project) {
                     val cleanRemote = remotePath.replace('\\', '/')
                     val parent = cleanRemote.substringBeforeLast('/')
                     if (parent.isNotBlank()) {
-                        try { sftp.mkdirs(parent) } catch (_: Exception) {}
+                        try { sftp.mkdirs(parent) } catch (_: Throwable) {}
                     }
                     sftp.put(localFile.absolutePath, cleanRemote)
                 } finally {
-                    try { sftp.close() } catch (_: Exception) {}
+                    try { sftp.close() } catch (_: Throwable) {}
                 }
 
                 onComplete(true)
-            } catch (e: Exception) {
-                onProgress("[SFTP ERROR] " + (e.message ?: e.toString()) + "\n")
+            } catch (t: Throwable) {
+                onProgress("[SFTP ERROR] " + (t.message ?: t.toString()) + "\n")
                 onComplete(false)
             } finally {
-                try { tempClient?.disconnect(); tempClient?.close() } catch (_: Exception) {}
+                try { tempClient?.disconnect(); tempClient?.close() } catch (_: Throwable) {}
             }
         }
     }
@@ -271,17 +398,10 @@ class RemoteConnectionManager(private val project: Project) {
             try {
                 disconnect()
 
-                val client = SSHClient()
-                client.addHostKeyVerifier(PromiscuousVerifier())
+                val client = createSshClient(connectTimeoutMs = 8000, readTimeoutMs = 15000)
                 client.connect(profile.host, profile.port)
 
-                when (profile.authType) {
-                    AuthType.PASSWORD -> client.authPassword(profile.user, profile.password)
-                    AuthType.PRIVATE_KEY -> {
-                        val keyProvider = client.loadKeys(profile.privateKeyPath)
-                        client.authPublickey(profile.user, keyProvider)
-                    }
-                }
+                authenticateClient(client, profile)
 
                 sshClient = client
                 startPortForwarding(profile)
@@ -290,10 +410,10 @@ class RemoteConnectionManager(private val project: Project) {
                 notifyUser("Remote Flow: Connected", "Connected successfully to " + profile.name, NotificationType.INFORMATION)
                 project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).connectionStateChanged(true, profile)
                 onSuccess()
-            } catch (e: Exception) {
+            } catch (t: Throwable) {
                 disconnect()
                 project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).connectionStateChanged(false, profile)
-                onError(e)
+                onError(t)
             }
         }
     }
