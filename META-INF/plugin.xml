@@ -1,0 +1,107 @@
+<idea-plugin>
+  <idea-version since-build="242" />
+  <version>1.0.0</version>
+  <id>uz.remote.flow</id>
+  <name>Remote Flow</name>
+  <vendor email="murodjonbobobekov000@gmail.com" url="https://github.com/MoonKnight000/Remote-Flow-plugin">Murodjon</vendor>
+  <description><![CDATA[<h2>Remote Flow — Lightweight Remote Server Development &amp; Execution Gateway</h2>
+    <p><b>Remote Flow</b> is an ultra-fast, zero-overhead remote server development plugin for IntelliJ IDEA developed by <b>Murodjon</b>. It enables you to write code locally on your fast machine (Windows, macOS, or Linux) with full IDE responsiveness while seamlessly synchronizing, building, running, debugging, and monitoring applications directly on remote Linux servers or cloud instances via secure SSH.</p>
+
+    <h3>⚡ Zero Headless IDE Overhead</h3>
+    <p>Traditional remote development tools (such as JetBrains Gateway or headless remote IDE backends) run a full IntelliJ instance on the remote server, consuming <b>2 GB to 4 GB of RAM</b> and causing UI input lag over remote networks. <b>Remote Flow</b> eliminates this overhead: your local IDE stays responsive, while the server runs only your application, saving server memory and computational resources.</p>
+
+    <h3>🚀 Core Features</h3>
+    <ul>
+        <li><b>Native Run Configuration Support:</b> Full integration with IntelliJ Run/Debug Configurations (<code>Remote Flow</code>) to run and debug applications directly on the remote server using standard IDE buttons.</li>
+        <li><b>Smart Run Delegation:</b> Optionally delegate standard IntelliJ Run (<code>Shift + F10</code>) and Debug (<code>Shift + F9</code>) actions to automatically execute on the active remote server with automatic port forwarding.</li>
+        <li><b>Differential Code Synchronization:</b> Fast Rsync and SSH SFTP sync engines with intelligent ignore patterns (<code>.git</code>, <code>.gradle</code>, <code>build</code>, <code>target</code>, <code>out</code>, <code>.idea</code>, <code>node_modules</code>). Supports Auto-Sync on Save (<code>Ctrl + S</code>) and targeted right-click sync for individual files or directories.</li>
+        <li><b>One-Click Remote JVM Debugging:</b> Automatically forwards JVM debug port <code>5005</code> and attaches IntelliJ's native debugger as soon as the remote application starts.</li>
+        <li><b>Bi-Directional SSH Port Forwarding:</b> Forward remote web apps and databases directly to <code>localhost</code> (e.g. App <code>8080</code>, PostgreSQL <code>5432</code>, MySQL <code>3306</code>, Redis <code>6379</code>, RabbitMQ <code>5672</code>/<code>15672</code>, MongoDB <code>27017</code>, Vite <code>5173</code>). Supports both <i>Local &rarr; Host</i> and <i>Host &rarr; Local</i> tunnels.</li>
+        <li><b>Automated Remote Port Scanner:</b> Automatically scans active listening sockets (<code>ss</code> / <code>netstat</code>) on the remote server, categorizes services with friendly icons, and enables instant one-click tunnel creation.</li>
+        <li><b>Hardware Resource Monitor &amp; Remote Task Manager:</b> Real-time CPU, RAM, and Disk metrics in the IntelliJ Status Bar. Interactive task manager to view running Linux processes and terminate hung tasks.</li>
+        <li><b>Remote File Explorer &amp; Configuration Manager:</b> Browse remote directories, upload files, create folders, and safely edit remote <code>.env</code> and <code>application.yml</code> configs with automatic backups (<code>.bak</code>).</li>
+        <li><b>Unified Log Console &amp; SSH Terminal:</b> Colorized ANSI log tool window with category filters (<code>ALL</code>, <code>RUN</code>, <code>SYNC</code>, <code>SSH</code>, <code>SYSTEM</code>), search, pause, export, plus embedded interactive SSH terminal tabs.</li>
+        <li><b>Multi-Server Profiles &amp; Watchdog:</b> Manage Dev, Staging, and Cloud servers with Password or SSH Private Key (<code>.pem</code>, <code>id_rsa</code>) authentication and auto-reconnect watchdog.</li>
+    </ul>
+
+    <h3>⌨️ Default Keyboard Shortcuts</h3>
+    <ul>
+        <li><code>Alt + Shift + R</code>: Remote Run</li>
+        <li><code>Alt + Shift + D</code>: Remote Debug (Port 5005)</li>
+        <li><code>Alt + Shift + S</code>: Remote Stop</li>
+        <li><code>Alt + Shift + U</code>: Fast Sync Project to Server</li>
+        <li><code>Alt + Shift + L</code>: Open Remote Flow Log Window</li>
+    </ul>]]></description>
+  <change-notes><![CDATA[<h3>Version 1.0.0</h3>
+    <ul>
+        <li><b>Run Configuration Integration:</b> Added native Remote Flow Run Configuration for seamless execution via standard IDE controls.</li>
+        <li><b>Standard Run Delegation:</b> Added <code>RemoteFlowProgramRunner</code> to route standard IDE Run/Debug actions (<code>Shift + F10</code> / <code>Shift + F9</code>) directly to the active remote server.</li>
+        <li><b>Bi-Directional Port Forwarding:</b> Added support for Local &rarr; Host and Host &rarr; Local SSH tunnels.</li>
+        <li><b>Active Listening Port Scanner:</b> Added automatic remote port scanner with service detection (Postgres, MySQL, Redis, RabbitMQ, Spring Boot, etc.).</li>
+        <li><b>Differential Sync:</b> Added Rsync auto-detection, SSH SFTP engine, smart exclude patterns, Auto-Sync on Save (<code>Ctrl + S</code>), and targeted right-click file sync.</li>
+        <li><b>JVM Remote Debugger:</b> Added automated port 5005 tunnel creation and debugger attachment.</li>
+        <li><b>Remote File Browser &amp; Config Editor:</b> Added remote file tree explorer and safe <code>.env</code> / <code>application.yml</code> editor with backup creation.</li>
+        <li><b>Hardware Monitor &amp; Task Manager:</b> Added real-time CPU, RAM, and Disk metrics to Status Bar widget and interactive Remote Task Manager dialog.</li>
+        <li><b>Unified Log Window:</b> Added colorized ANSI console with categorized filtering and log export.</li>
+    </ul>]]></change-notes>
+  <depends>com.intellij.modules.platform</depends>
+  <depends>com.intellij.modules.java</depends>
+  <extensions defaultExtensionNs="com.intellij">
+    <projectConfigurable parentId="tools" id="uz.remote.flow.settings.RemoteFlowConfigurable" displayName="Remote Flow" instance="uz.remote.flow.settings.RemoteFlowConfigurable" />
+    <statusBarWidgetFactory id="RemoteFlowStatusBar" implementation="uz.remote.flow.ui.RemoteFlowStatusBarWidgetFactory" order="last" />
+    <toolWindow id="RemoteFlow" icon="icons/remoteFlow.svg" secondary="true" anchor="right" factoryClass="uz.remote.flow.ui.RemoteFlowToolWindowFactory" />
+    <toolWindow id="Remote Flow Log" icon="icons/remoteFlow.svg" secondary="true" anchor="bottom" factoryClass="uz.remote.flow.ui.RemoteFlowLogToolWindowFactory" />
+    <programRunner implementation="uz.remote.flow.execution.RemoteFlowProgramRunner" order="first" />
+    <programRunner implementation="uz.remote.flow.execution.RemoteFlowDebuggerRunner" order="first" />
+    <configurationType implementation="uz.remote.flow.run.RemoteFlowConfigurationType" />
+    <postStartupActivity implementation="uz.remote.flow.run.RemoteFlowStartupActivity" />
+    <notificationGroup id="Remote Flow" displayType="BALLOON" isLogByDefault="true" />
+  </extensions>
+  <actions>
+    <!-- Group in Tools Menu -->
+    <group id="RemoteFlow.ToolsGroup" text="Remote Flow" description="Remote Flow operations" popup="true" icon="icons/remoteFlow.svg">
+      <add-to-group group-id="ToolsMenu" anchor="last" />
+      <action id="RemoteFlow.ConnectAction" class="uz.remote.flow.actions.RemoteFlowConnectAction" text="Connect / Disconnect Server" description="Connect or disconnect active remote server" />
+      <action id="RemoteFlow.SyncAction" class="uz.remote.flow.actions.RemoteFlowSyncAction" text="Fast Sync Project to Server" description="Sync all project changes to active remote server">
+        <keyboard-shortcut keymap="$default" first-keystroke="alt shift U" />
+      </action>
+      <action id="RemoteFlow.SyncPreviewAction" class="uz.remote.flow.actions.RemoteFlowSyncPreviewAction" text="Preview Sync Diff (Dry Run)..." description="Preview files that will be uploaded or deleted on remote server" />
+      <action id="RemoteFlow.HotReloadAction" class="uz.remote.flow.actions.RemoteFlowHotReloadAction" text="Remote Hot Reload / Fast Recompile" description="Recompile and reload current class on remote server without full restart">
+        <keyboard-shortcut keymap="$default" first-keystroke="alt shift H" />
+      </action>
+      <action id="RemoteFlow.RunAction" class="uz.remote.flow.actions.RemoteFlowRunAction" text="Remote Run" description="Build and run application on remote server" icon="icons/remoteRun.svg">
+        <keyboard-shortcut keymap="$default" first-keystroke="alt shift R" />
+      </action>
+      <action id="RemoteFlow.DebugAction" class="uz.remote.flow.actions.RemoteFlowDebugAction" text="Remote Debug" description="Run application on remote server in JVM debug mode (port 5005)" icon="icons/remoteDebug.svg">
+        <keyboard-shortcut keymap="$default" first-keystroke="alt shift D" />
+      </action>
+      <action id="RemoteFlow.StopAction" class="uz.remote.flow.actions.RemoteFlowStopAction" text="Remote Stop" description="Stop running application on active remote server" icon="icons/remoteStop.svg">
+        <keyboard-shortcut keymap="$default" first-keystroke="alt shift S" />
+      </action>
+      <action id="RemoteFlow.TerminalAction" class="uz.remote.flow.actions.RemoteFlowTerminalAction" text="Open Remote SSH Terminal" description="Open interactive terminal session with active server" />
+      <action id="RemoteFlow.BrowseFilesAction" class="uz.remote.flow.actions.RemoteFlowBrowseFilesAction" text="Browse Remote Files..." description="View remote server directory files and folders" />
+      <action id="RemoteFlow.ConfigAction" class="uz.remote.flow.actions.RemoteFlowConfigAction" text="Remote Configs (.env / .yml)..." description="Edit remote .env and yaml configurations" />
+      <action id="RemoteFlow.OpenLogAction" class="uz.remote.flow.actions.RemoteFlowOpenLogAction" text="Show Remote Flow Logs" description="Open Remote Flow log console in bottom tool window">
+        <keyboard-shortcut keymap="$default" first-keystroke="alt shift L" />
+      </action>
+      <separator />
+      <action id="RemoteFlow.OpenSettingsAction" class="uz.remote.flow.actions.RemoteFlowOpenSettingsAction" text="Remote Flow Settings..." description="Configure servers, ports and sync settings" />
+    </group>
+    <!-- Context menu in Project View -->
+    <group id="RemoteFlow.ProjectViewGroup" text="Remote Flow" popup="true" icon="icons/remoteFlow.svg">
+      <add-to-group group-id="ProjectViewPopupMenu" anchor="after" relative-to-action="CutCopyPasteGroup" />
+      <action id="RemoteFlow.ProjectViewBrowseFilesAction" class="uz.remote.flow.actions.RemoteFlowBrowseFilesAction" text="Browse Remote Files" description="Explore remote server directory files and folders" />
+      <action id="RemoteFlow.SyncSelectionAction" class="uz.remote.flow.actions.RemoteFlowSyncSelectionAction" text="Sync Selected to Remote" description="Sync selected file or folder to remote server" />
+      <action id="RemoteFlow.ProjectViewSyncPreviewAction" class="uz.remote.flow.actions.RemoteFlowSyncPreviewAction" text="Preview Sync Diff..." description="Preview changes before uploading to remote server" />
+      <action id="RemoteFlow.ProjectViewTerminalAction" class="uz.remote.flow.actions.RemoteFlowTerminalAction" text="Open Remote Terminal" description="Open terminal session to active server" />
+    </group>
+    <!-- Context menu in Editor -->
+    <group id="RemoteFlow.EditorGroup" text="Remote Flow" popup="true" icon="icons/remoteFlow.svg">
+      <add-to-group group-id="EditorPopupMenu" anchor="last" />
+      <action id="RemoteFlow.EditorHotReloadAction" class="uz.remote.flow.actions.RemoteFlowHotReloadAction" text="Hot Reload This File" description="Recompile and reload this class on remote server" />
+      <action id="RemoteFlow.EditorSyncAction" class="uz.remote.flow.actions.RemoteFlowSyncSelectionAction" text="Sync Current File to Remote" description="Sync current active file to remote server" />
+      <action id="RemoteFlow.EditorRunAction" class="uz.remote.flow.actions.RemoteFlowRunAction" text="Run on Remote Server" description="Build and run application on remote server" />
+      <action id="RemoteFlow.EditorDebugAction" class="uz.remote.flow.actions.RemoteFlowDebugAction" text="Debug on Remote Server" description="Run application in debug mode on remote server" />
+    </group>
+  </actions>
+</idea-plugin>
