@@ -124,6 +124,11 @@ Traditional remote development solutions (such as JetBrains Gateway or headless 
 - **Encrypted Profile Env Vault**: Manage sensitive credentials, API keys, and configurations per server profile without checking them into Git.
 - **1-Click `.env` Import**: Automatically parses and imports local `.env` files directly into your remote execution profile.
 
+### 23. Real-Time Remote Performance Profiler & JFR (`Alt + Shift + P`)
+- **Native Embedded Performance Panel**: Embedded directly in the Run tool window console, showing real-time **CPU %** (green area chart) and **Heap Memory** (blue area chart) of the running remote application.
+- **1-Click Recording & JFR Capture**: Click **"Start Recording"** (or use `rf profile start`) to initiate remote Java Flight Recorder (JFR) profiling or CPU/Memory sampling on the remote JVM.
+- **Interactive Hotspots & Source Navigation**: On **"Stop Recording"**, downloads and parses the `.jfr` snapshot, displaying CPU top method hotspots, memory allocations, and GC pause stats with double-click editor navigation and 1-click **"Open in IntelliJ Profiler"**.
+
 ---
 
 ## ⌨️ Default Keyboard Shortcuts
@@ -138,6 +143,7 @@ Traditional remote development solutions (such as JetBrains Gateway or headless 
 | `Alt + Shift + C` | **Compare with Server** | Open visual side-by-side diff comparing local file or folder with remote server |
 | `Alt + Shift + M` | **Remote Memory Tuner** | Open JVM heap allocation and remote memory tuner dialog |
 | `Alt + Shift + T` | **Open SSH Terminal** | Open 1-click interactive SSH terminal session inside IntelliJ |
+| `Alt + Shift + P` | **Performance Profiler** | Start/stop remote CPU & Memory recording or inspect profiling snapshots |
 | `Alt + Shift + L` | **Show Logs** | Focus and open the unified Remote Flow Log console |
 | `Shift + F10` | **Standard Run** | *(When Run Delegation is enabled)* Automatically routes to Remote Run |
 | `Shift + F9` | **Standard Debug** | *(When Run Delegation is enabled)* Automatically routes to Remote Debug |

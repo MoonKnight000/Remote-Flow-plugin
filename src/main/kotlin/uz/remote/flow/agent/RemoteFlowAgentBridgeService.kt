@@ -82,6 +82,9 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
                 http.createContext("/api/terminal", TerminalHandler())
                 http.createContext("/api/exec", ExecHandler())
                 http.createContext("/api/stop", StopHandler())
+                http.createContext("/api/profile/start", ProfileStartHandler())
+                http.createContext("/api/profile/stop", ProfileStopHandler())
+                http.createContext("/api/profile/status", ProfileStatusHandler())
 
                 http.start()
                 server = http
@@ -663,6 +666,83 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
         }
     }
 
+    private inner class ProfileStartHandler : HttpHandler {
+        override fun handle(exchange: HttpExchange) {
+            val profiler = uz.remote.flow.profiler.RemoteProfilerManager.getInstance(project)
+            val latch = CountDownLatch(1)
+            var startOk = false
+            var startMsg = ""
+            profiler.startRecording(profiler.selectedMode) { ok, msg ->
+                startOk = ok
+                startMsg = msg
+                latch.countDown()
+            }
+            try { latch.await(10, TimeUnit.SECONDS) } catch (_: Exception) {}
+            val json = buildString {
+                append("{")
+                append("\"status\":\"").append(if (startOk) "recording" else "error").append("\",")
+                append("\"message\":\"").append(escapeJson(startMsg)).append("\",")
+                append("\"mode\":\"").append(profiler.selectedMode.displayName).append("\"")
+                append("}")
+            }
+            val bytes = json.toByteArray(StandardCharsets.UTF_8)
+            exchange.responseHeaders.set("Content-Type", "application/json; charset=UTF-8")
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+    }
+
+    private inner class ProfileStopHandler : HttpHandler {
+        override fun handle(exchange: HttpExchange) {
+            val profiler = uz.remote.flow.profiler.RemoteProfilerManager.getInstance(project)
+            val latch = CountDownLatch(1)
+            var snap: uz.remote.flow.profiler.ProfilingSnapshot? = null
+            profiler.stopRecording { snapshot ->
+                snap = snapshot
+                latch.countDown()
+            }
+            try { latch.await(20, TimeUnit.SECONDS) } catch (_: Exception) {}
+            val s = snap ?: profiler.lastSnapshot
+            val json = buildString {
+                append("{")
+                append("\"status\":\"stopped\",")
+                append("\"durationSeconds\":").append(s?.durationSeconds ?: 0).append(",")
+                append("\"peakCpu\":").append(s?.peakCpuPercent ?: 0.0).append(",")
+                append("\"peakHeap\":").append(s?.peakHeapUsedMb ?: 0).append(",")
+                append("\"hotspots\":[")
+                s?.hotspots?.take(5)?.forEachIndexed { idx, h ->
+                    if (idx > 0) append(",")
+                    append("{\"method\":\"").append(escapeJson(h.fullMethodName)).append("\",\"cpuPercent\":").append(h.cpuPercent).append("}")
+                }
+                append("]}")
+            }
+            val bytes = json.toByteArray(StandardCharsets.UTF_8)
+            exchange.responseHeaders.set("Content-Type", "application/json; charset=UTF-8")
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+    }
+
+    private inner class ProfileStatusHandler : HttpHandler {
+        override fun handle(exchange: HttpExchange) {
+            val profiler = uz.remote.flow.profiler.RemoteProfilerManager.getInstance(project)
+            val m = profiler.latestMetric
+            val json = buildString {
+                append("{")
+                append("\"state\":\"").append(profiler.currentState.name).append("\",")
+                append("\"cpuPercent\":").append(m.cpuPercent).append(",")
+                append("\"heapUsedMb\":").append(m.heapUsedMb).append(",")
+                append("\"heapMaxMb\":").append(m.heapMaxMb).append(",")
+                append("\"hasLastSnapshot\":").append(profiler.lastSnapshot != null)
+                append("}")
+            }
+            val bytes = json.toByteArray(StandardCharsets.UTF_8)
+            exchange.responseHeaders.set("Content-Type", "application/json; charset=UTF-8")
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+    }
+
     private fun computeSimpleDiff(local: String, remote: String): String {
         val localLines = local.lines()
         val remoteLines = remote.lines()
@@ -969,6 +1049,23 @@ if /i "%ACTION%"=="terminal" (
     goto :finish
 )
 
+if /i "%ACTION%"=="profile" (
+    set "SUBCMD=%~2"
+    if /i "!SUBCMD!"=="start" (
+        curl.exe -s -X POST "http://127.0.0.1:!RF_PORT!/api/profile/start"
+        echo.
+        goto :finish
+    )
+    if /i "!SUBCMD!"=="stop" (
+        curl.exe -s -X POST "http://127.0.0.1:!RF_PORT!/api/profile/stop"
+        echo.
+        goto :finish
+    )
+    curl.exe -s "http://127.0.0.1:!RF_PORT!/api/profile/status"
+    echo.
+    goto :finish
+)
+
 if /i "%ACTION%"=="diagnostics" (
     curl.exe -s "http://127.0.0.1:!RF_PORT!/api/diagnostics"
     echo.
@@ -1011,7 +1108,7 @@ if /i "%ACTION%"=="exec" (
 )
 
 echo [Remote Flow] Unknown command: %ACTION%
-echo Usage: rf ^<test ^| build ^| sync ^| pull ^| diff [path] ^| mem [max] ^| env ^| terminal ^| docker ^| diagnostics ^| exec ^<cmd^> ^| status^>
+echo Usage: rf ^<test ^| build ^| sync ^| pull ^| diff [path] ^| mem [max] ^| env ^| terminal ^| profile [start^|stop^|status] ^| docker ^| diagnostics ^| exec ^<cmd^> ^| status^>
 exit /b 1
 
 :finish
@@ -1121,6 +1218,19 @@ switch (${'$'}Action.ToLower()) {
     "terminal" {
         & curl.exe -s "http://127.0.0.1:${'$'}port/api/terminal"
     }
+    "profile" {
+        ${'$'}sub = if (${'$'}RemainingArgs.Count -gt 0) { ${'$'}RemainingArgs[0].ToLower() } else { "status" }
+        if (${'$'}sub -eq "start") {
+            & curl.exe -s -X POST "http://127.0.0.1:${'$'}port/api/profile/start"
+            Write-Host ""
+        } elseif (${'$'}sub -eq "stop") {
+            & curl.exe -s -X POST "http://127.0.0.1:${'$'}port/api/profile/stop"
+            Write-Host ""
+        } else {
+            & curl.exe -s "http://127.0.0.1:${'$'}port/api/profile/status"
+            Write-Host ""
+        }
+    }
     "diagnostics" {
         & curl.exe -s "http://127.0.0.1:${'$'}port/api/diagnostics"
         Write-Host ""
@@ -1147,7 +1257,7 @@ switch (${'$'}Action.ToLower()) {
         & curl.exe -s -N -X POST "http://127.0.0.1:${'$'}port/api/exec" --data-binary "${'$'}cmd"
     }
     default {
-        Write-Host "Usage: rf <test | build | sync | pull | diff [path] | mem [max] | env | terminal | docker | diagnostics | exec <command> | status>"
+        Write-Host "Usage: rf <test | build | sync | pull | diff [path] | mem [max] | env | terminal | profile [start|stop|status] | docker | diagnostics | exec <command> | status>"
         exit 1
     }
 }
@@ -1232,6 +1342,20 @@ case "${'$'}ACTION" in
     terminal)
         curl -s "http://127.0.0.1:${'$'}PORT/api/terminal"
         ;;
+    profile)
+        shift
+        SUB="${'$'}{1:-status}"
+        if [ "${'$'}SUB" = "start" ]; then
+            curl -s -X POST "http://127.0.0.1:${'$'}PORT/api/profile/start"
+            echo ""
+        elif [ "${'$'}SUB" = "stop" ]; then
+            curl -s -X POST "http://127.0.0.1:${'$'}PORT/api/profile/stop"
+            echo ""
+        else
+            curl -s "http://127.0.0.1:${'$'}PORT/api/profile/status"
+            echo ""
+        fi
+        ;;
     diagnostics)
         curl -s "http://127.0.0.1:${'$'}PORT/api/diagnostics"
         echo ""
@@ -1259,7 +1383,7 @@ case "${'$'}ACTION" in
         curl -s -N -X POST "http://127.0.0.1:${'$'}PORT/api/exec" --data-binary "${'$'}*"
         ;;
     *)
-        echo "Usage: rf <test|build|sync|pull|diff [path]|mem [max]|env|terminal|docker|diagnostics|exec <cmd>|status>"
+        echo "Usage: rf <test|build|sync|pull|diff [path]|mem [max]|env|terminal|profile [start|stop|status]|docker|diagnostics|exec <cmd>|status>"
         exit 1
         ;;
 esac
@@ -1287,6 +1411,7 @@ This project is developed locally, but its runtime environment, databases (Postg
   - Configure Remote Memory: `.\rf.cmd mem [maxHeap]` (e.g. `.\rf.cmd mem 4g`)
   - View Environment Variables: `.\rf.cmd env`
   - Open Remote SSH Terminal: `.\rf.cmd terminal`
+  - Performance Profiler (CPU & RAM): `.\rf.cmd profile [start|stop|status]`
   - Manage Remote Docker: `.\rf.cmd docker` / `.\rf.cmd docker logs <container>`
   - Get Error Diagnostics: `.\rf.cmd diagnostics`
   - Execute Remote Command: `.\rf.cmd exec "<command>"`

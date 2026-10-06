@@ -159,6 +159,12 @@
                     description="Tune remote JVM heap (-Xmx/-Xms), Node.js, and Docker memory limits">
                 <keyboard-shortcut keymap="$default" first-keystroke="alt shift M"/>
             </action>
+            <action id="RemoteFlow.ProfilerAction"
+                    class="uz.remote.flow.actions.RemoteFlowProfilerAction"
+                    text="Remote Performance Profiler"
+                    description="Toggle remote CPU and Memory performance profiling or view latest snapshot">
+                <keyboard-shortcut keymap="$default" first-keystroke="alt shift P"/>
+            </action>
             <action id="RemoteFlow.BrowseFilesAction"
                     class="uz.remote.flow.actions.RemoteFlowBrowseFilesAction"
                     text="Browse Remote Files..."

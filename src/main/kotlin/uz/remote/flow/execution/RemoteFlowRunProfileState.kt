@@ -106,6 +106,11 @@ class RemoteFlowRunProfileState(
         connMgr.activeProcessHandler = processHandler
         processHandler.startNotify()
 
+        // Attach Remote Performance Profiler Panel (Live CPU/Heap graphs & recording)
+        val profilerManager = uz.remote.flow.profiler.RemoteProfilerManager.getInstance(project)
+        val performancePanel = uz.remote.flow.ui.RemotePerformancePanel(project, profilerManager, processHandler)
+        val executionConsole = RemoteFlowExecutionConsole(console, performancePanel)
+
         // Automatically open Remote Flow log console when execution starts
         logService.showLogWindow()
 
@@ -121,7 +126,7 @@ class RemoteFlowRunProfileState(
             connMgr = connMgr
         )
 
-        return DefaultExecutionResult(console, processHandler)
+        return DefaultExecutionResult(executionConsole, processHandler)
     }
 
     private fun startBackgroundExecution(

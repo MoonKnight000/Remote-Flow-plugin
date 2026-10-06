@@ -15,6 +15,7 @@
   - Configure Remote Memory: `.\rf.cmd mem [maxHeap]` (e.g. `.\rf.cmd mem 4g`)
   - View Environment Variables: `.\rf.cmd env`
   - Open Remote SSH Terminal: `.\rf.cmd terminal`
+  - Performance Profiler (CPU & RAM): `.\rf.cmd profile [start|stop|status]`
   - Manage Remote Docker: `.\rf.cmd docker` / `.\rf.cmd docker logs <container>`
   - Get Error Diagnostics: `.\rf.cmd diagnostics`
   - Execute Remote Command: `.\rf.cmd exec "<command>"`

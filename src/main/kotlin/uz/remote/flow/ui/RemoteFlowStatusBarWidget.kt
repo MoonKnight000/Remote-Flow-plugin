@@ -279,6 +279,27 @@ class RemoteFlowStatusBarWidget(private val project: Project) : CustomStatusBarW
                     }
                 })
 
+                group.add(object : AnAction("⚡ Performance Profiler (Alt+Shift+P)...", "Profile CPU & Memory performance on remote server", com.intellij.icons.AllIcons.Actions.Profile) {
+                    override fun actionPerformed(e: AnActionEvent) {
+                        val profiler = uz.remote.flow.profiler.RemoteProfilerManager.getInstance(project)
+                        if (connMgr.isProcessRunning) {
+                            if (profiler.currentState == uz.remote.flow.profiler.ProfilerState.RECORDING) {
+                                profiler.stopRecording()
+                            } else {
+                                profiler.startRecording(profiler.selectedMode)
+                            }
+                        } else if (profiler.lastSnapshot != null) {
+                            uz.remote.flow.ui.RemoteProfilerResultsDialog(project, profiler.lastSnapshot!!).show()
+                        } else {
+                            connMgr.notifyUser(
+                                "Remote Profiler",
+                                "Run application first (Alt+Shift+R) to monitor live performance and record profiles.",
+                                com.intellij.notification.NotificationType.INFORMATION
+                            )
+                        }
+                    }
+                })
+
                 val isMonitoring = active.monitorMode != "OFF"
                 if (isMonitoring) {
                     latestMetrics?.let { m ->
