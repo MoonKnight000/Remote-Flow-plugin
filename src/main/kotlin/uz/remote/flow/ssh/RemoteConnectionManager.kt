@@ -558,7 +558,8 @@ class RemoteConnectionManager(private val project: Project) {
         if (!client.isConnected) return
 
         if (portMap.direction == ForwardDirection.LOCAL_TO_REMOTE) {
-            val serverSocket: ServerSocket
+            var serverSocket: ServerSocket
+            var boundPort = portMap.localPort
             synchronized(tunnelLock) {
                 val existing = activeTunnels[portMap.localPort]
                 if (existing != null && !existing.isClosed && existing.isBound) {
@@ -567,32 +568,62 @@ class RemoteConnectionManager(private val project: Project) {
                 }
 
                 try {
-                    serverSocket = ServerSocket()
-                    serverSocket.reuseAddress = true
-                    serverSocket.bind(InetSocketAddress("127.0.0.1", portMap.localPort))
-                    activeTunnels[portMap.localPort] = serverSocket
+                    val s = ServerSocket()
+                    s.reuseAddress = true
+                    s.bind(InetSocketAddress("127.0.0.1", portMap.localPort))
+                    serverSocket = s
+                    activeTunnels[portMap.localPort] = s
                     portMap.isForwarded = true
                 } catch (e: Exception) {
-                    portMap.isForwarded = false
-                    try {
-                        uz.remote.flow.logging.RemoteFlowLogService.getInstance(project).log(
-                            "[PORT FORWARD WARNING] Local port ${portMap.localPort} could not be bound: ${e.message}\n",
-                            uz.remote.flow.logging.LogCategory.SSH,
-                            config.activeProfile.name
-                        )
-                    } catch (_: Exception) {}
-                    return
+                    // Port conflict: find next available port using IntelliJ's built-in NetUtils
+                    val fallbackPort = com.intellij.util.net.NetUtils.tryToFindAvailableSocketPort(portMap.localPort + 1)
+                    if (fallbackPort > 0) {
+                        try {
+                            val s = ServerSocket()
+                            s.reuseAddress = true
+                            s.bind(InetSocketAddress("127.0.0.1", fallbackPort))
+                            serverSocket = s
+                            val origPort = portMap.localPort
+                            boundPort = fallbackPort
+                            portMap.localPort = fallbackPort
+                            activeTunnels[fallbackPort] = s
+                            portMap.isForwarded = true
+                            notifyUser(
+                                "Port Conflict Resolved",
+                                "Port $origPort is busy; remapped tunnel to localhost:$fallbackPort",
+                                NotificationType.INFORMATION
+                            )
+                            uz.remote.flow.logging.RemoteFlowLogService.getInstance(project).log(
+                                "[PORT FORWARD] Port $origPort was busy. Auto-resolved to localhost:$fallbackPort -> remote :${portMap.remotePort}\n",
+                                uz.remote.flow.logging.LogCategory.SSH,
+                                config.activeProfile.name
+                            )
+                        } catch (fEx: Exception) {
+                            portMap.isForwarded = false
+                            return
+                        }
+                    } else {
+                        portMap.isForwarded = false
+                        try {
+                            uz.remote.flow.logging.RemoteFlowLogService.getInstance(project).log(
+                                "[PORT FORWARD WARNING] Local port ${portMap.localPort} could not be bound: ${e.message}\n",
+                                uz.remote.flow.logging.LogCategory.SSH,
+                                config.activeProfile.name
+                            )
+                        } catch (_: Exception) {}
+                        return
+                    }
                 }
             }
 
             executor.submit {
                 try {
-                    val params = Parameters("127.0.0.1", portMap.localPort, "127.0.0.1", portMap.remotePort)
+                    val params = Parameters("127.0.0.1", boundPort, "127.0.0.1", portMap.remotePort)
                     client.newLocalPortForwarder(params, serverSocket).listen()
                 } catch (e: Exception) {
                     synchronized(tunnelLock) {
-                        if (activeTunnels[portMap.localPort] === serverSocket) {
-                            activeTunnels.remove(portMap.localPort)
+                        if (activeTunnels[boundPort] === serverSocket) {
+                            activeTunnels.remove(boundPort)
                             portMap.isForwarded = false
                         }
                     }

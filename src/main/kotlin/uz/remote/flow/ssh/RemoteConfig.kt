@@ -72,6 +72,12 @@ data class ServerProfile(
     var jumpPort: Int = 22,
     var jumpUser: String = "",
     var jumpPrivateKeyPath: String = "",
+    var maxHeapSize: String = "",
+    var initialHeapSize: String = "",
+    var extraJvmArgs: String = "",
+    var nodeMemoryLimitMb: Int = 0,
+    var dockerMemoryLimit: String = "",
+    var environmentVariables: MutableMap<String, String> = mutableMapOf(),
     var forwardedPorts: MutableList<PortMapping> = defaultPorts()
 ) {
     override fun toString(): String = name + " (" + host + ")"
@@ -110,6 +116,12 @@ data class ServerProfile(
             jumpPort = jumpPort,
             jumpUser = jumpUser,
             jumpPrivateKeyPath = jumpPrivateKeyPath,
+            maxHeapSize = maxHeapSize,
+            initialHeapSize = initialHeapSize,
+            extraJvmArgs = extraJvmArgs,
+            nodeMemoryLimitMb = nodeMemoryLimitMb,
+            dockerMemoryLimit = dockerMemoryLimit,
+            environmentVariables = environmentVariables.toMutableMap(),
             forwardedPorts = forwardedPorts.map { it.copy() }.toMutableList()
         )
     }
@@ -236,7 +248,7 @@ fun cleanAnsiText(text: String): String {
     return s
 }
 
-fun buildRemoteExecutionCommand(rawCmd: String, javaHome: String): String {
+fun buildRemoteExecutionCommand(rawCmd: String, javaHome: String, profile: ServerProfile? = null): String {
     val javaPrefix = resolveJavaEnvPrefix(javaHome)
     var cmd = rawCmd.trim()
     // For Gradle, use --console=plain to prevent curses/interactive progress bar animations
@@ -245,7 +257,41 @@ fun buildRemoteExecutionCommand(rawCmd: String, javaHome: String): String {
     if ((cmd.contains("gradlew") || cmd.contains("gradle")) && !cmd.contains("--console")) {
         cmd = "$cmd --console=plain"
     }
-    return "${javaPrefix}export GRADLE_OPTS=\"-Dorg.gradle.console=plain \${GRADLE_OPTS:-}\"; export TERM=xterm-256color; export FORCE_COLOR=1; export SPRING_OUTPUT_ANSI_ENABLED=ALWAYS; sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $cmd"
+
+    val envPrefix = buildString {
+        if (profile != null) {
+            // 1. Environment variables
+            profile.environmentVariables.forEach { (k, v) ->
+                if (k.isNotBlank()) {
+                    append("export ").append(k.trim()).append("=\"").append(v.replace("\"", "\\\"")).append("\"; ")
+                }
+            }
+            // 2. Memory tuning options (JVM -Xmx / -Xms and extra args)
+            val jvmOpts = mutableListOf<String>()
+            if (profile.maxHeapSize.isNotBlank()) {
+                val mx = if (profile.maxHeapSize.startsWith("-Xmx")) profile.maxHeapSize else "-Xmx${profile.maxHeapSize}"
+                jvmOpts.add(mx)
+            }
+            if (profile.initialHeapSize.isNotBlank()) {
+                val ms = if (profile.initialHeapSize.startsWith("-Xms")) profile.initialHeapSize else "-Xms${profile.initialHeapSize}"
+                jvmOpts.add(ms)
+            }
+            if (profile.extraJvmArgs.isNotBlank()) {
+                jvmOpts.add(profile.extraJvmArgs.trim())
+            }
+            if (jvmOpts.isNotEmpty()) {
+                val jvmOptStr = jvmOpts.joinToString(" ")
+                append("export JAVA_TOOL_OPTIONS=\"$jvmOptStr \${JAVA_TOOL_OPTIONS:-}\"; ")
+                append("export _JAVA_OPTIONS=\"$jvmOptStr \${_JAVA_OPTIONS:-}\"; ")
+            }
+            // 3. Node.js memory options
+            if (profile.nodeMemoryLimitMb > 0) {
+                append("export NODE_OPTIONS=\"--max-old-space-size=${profile.nodeMemoryLimitMb} \${NODE_OPTIONS:-}\"; ")
+            }
+        }
+    }
+
+    return "${javaPrefix}${envPrefix}export GRADLE_OPTS=\"-Dorg.gradle.console=plain \${GRADLE_OPTS:-}\"; export TERM=xterm-256color; export FORCE_COLOR=1; export SPRING_OUTPUT_ANSI_ENABLED=ALWAYS; sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $cmd"
 }
 
 fun cleanProgressRemnants(text: String): String {

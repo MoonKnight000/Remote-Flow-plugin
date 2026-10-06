@@ -499,6 +499,33 @@ class ServerProfileEditDialog(
         val quickBar = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
         quickBar.add(btnImportSshConfig)
         quickBar.add(btnAutoDetectStack)
+
+        val btnMemoryTuner = JButton("🧠 Memory (-Xmx)", AllIcons.Actions.Profile).apply {
+            toolTipText = "Configure remote JVM heap (-Xmx/-Xms), Node.js memory, and Docker container limits"
+            addActionListener {
+                val temp = profile.copyProfile()
+                applyToProfile(temp)
+                val dlg = uz.remote.flow.memory.RemoteMemoryTunerDialog(project, temp)
+                if (dlg.showAndGet()) {
+                    profile.maxHeapSize = temp.maxHeapSize
+                    profile.initialHeapSize = temp.initialHeapSize
+                    profile.extraJvmArgs = temp.extraJvmArgs
+                    profile.nodeMemoryLimitMb = temp.nodeMemoryLimitMb
+                    profile.dockerMemoryLimit = temp.dockerMemoryLimit
+                }
+            }
+        }
+        quickBar.add(btnMemoryTuner)
+
+        val btnEnvVars = JButton("🔐 Env Vars (${profile.environmentVariables.size})", AllIcons.Nodes.Variable).apply {
+            toolTipText = "Configure environment variables and secrets (import from .env)"
+            addActionListener {
+                uz.remote.flow.settings.RemoteEnvVarsDialog(project, profile.environmentVariables).show()
+                text = "🔐 Env Vars (${profile.environmentVariables.size})"
+            }
+        }
+        quickBar.add(btnEnvVars)
+
         gbc.gridx = 0; gbc.gridy = 0; gbc.gridwidth = 4; gbc.weightx = 1.0; form.add(quickBar, gbc)
         gbc.gridwidth = 1
 
@@ -756,6 +783,12 @@ class ServerProfileEditDialog(
         p.jumpPort = jumpPortField.text.trim().toIntOrNull() ?: 22
         p.jumpUser = jumpUserField.text.trim()
         p.jumpPrivateKeyPath = jumpKeyPathField.text.trim()
+        p.maxHeapSize = profile.maxHeapSize
+        p.initialHeapSize = profile.initialHeapSize
+        p.extraJvmArgs = profile.extraJvmArgs
+        p.nodeMemoryLimitMb = profile.nodeMemoryLimitMb
+        p.dockerMemoryLimit = profile.dockerMemoryLimit
+        p.environmentVariables = profile.environmentVariables.toMutableMap()
     }
 
     override fun doOKAction() {

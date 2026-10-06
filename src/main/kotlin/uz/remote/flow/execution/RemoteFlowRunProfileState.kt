@@ -135,7 +135,7 @@ class RemoteFlowRunProfileState(
         connMgr: RemoteConnectionManager
     ) {
         val syncMgr = FastSyncManager(project)
-        val cmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(rawCmd, p.javaHome)
+        val cmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(rawCmd, p.javaHome, p)
         val port = debugPort
 
         val doRun = {
@@ -220,7 +220,7 @@ class RemoteFlowRunProfileState(
 
                             if (p.postRunCommand.isNotBlank()) {
                                 processHandler.printSystem("[POST-RUN HOOK] Running post-run hook: ${p.postRunCommand}\n")
-                                val postCmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(p.postRunCommand, p.javaHome)
+                                val postCmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(p.postRunCommand, p.javaHome, p)
                                 connMgr.executeRemoteCommand(postCmd, workingDir, false, { processHandler.printOutput(it) }, {})
                             }
                         }
@@ -230,7 +230,25 @@ class RemoteFlowRunProfileState(
                         val finishMsg = "[REMOTE FLOW FINISHED] Exit code: $code\n"
                         processHandler.printSystem(finishMsg)
                         logService.log(finishMsg, LogCategory.RUN, p.name)
-                        connMgr.notifyUser("Remote Flow: Execution Finished", "Application completed on server ${p.name} (Exit code: $code)", NotificationType.INFORMATION)
+                        if (code == 137) {
+                            connMgr.notifyUser(
+                                "Remote Flow: Process Crashed (OOMKilled)",
+                                "Application on '${p.name}' was killed by the OS (Exit code 137 / Out of Memory). Consider increasing memory via Remote Memory Tuning.",
+                                NotificationType.ERROR
+                            )
+                        } else if (code != 0) {
+                            connMgr.notifyUser(
+                                "Remote Flow: Execution Finished with Errors",
+                                "Application on server ${p.name} exited with code $code.",
+                                NotificationType.WARNING
+                            )
+                        } else {
+                            connMgr.notifyUser(
+                                "Remote Flow: Execution Finished",
+                                "Application completed on server ${p.name} successfully (Exit code 0).",
+                                NotificationType.INFORMATION
+                            )
+                        }
                         processHandler.finishProcess(code)
                     }
                 )
@@ -239,7 +257,7 @@ class RemoteFlowRunProfileState(
             val runWithPreHook = {
                 if (p.preRunCommand.isNotBlank()) {
                     processHandler.printSystem("[PRE-RUN HOOK] Executing pre-run hook: ${p.preRunCommand}\n")
-                    val preCmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(p.preRunCommand, p.javaHome)
+                    val preCmd = uz.remote.flow.ssh.buildRemoteExecutionCommand(p.preRunCommand, p.javaHome, p)
                     connMgr.executeRemoteCommand(
                         cmd = preCmd,
                         workingDir = workingDir,

@@ -100,8 +100,29 @@ Traditional remote development solutions (such as JetBrains Gateway or headless 
 - **1-Click Container Port Tunnel**: Map container internal ports directly to `localhost` in one click.
 
 ### 17. AI Coding Agent Bridge & Model Context Protocol (MCP)
-- **Native AI CLI (`rf`)**: Run remote tests, builds, and commands from terminal tools (`.\rf.cmd test`, `.\rf.cmd pull`, `.\rf.cmd docker`, `.\rf.cmd diagnostics`).
-- **Model Context Protocol (MCP)**: Connect AI coding assistants (Cursor, Claude Code, Antigravity, Windsurf) to Remote Flow via `/api/mcp` for intelligent autonomous execution with structured compiler error feedback.
+- **Native AI CLI (`rf`)**: Run remote tests, builds, memory tuning, diffs, and diagnostics directly from your command line (`.\rf.cmd test`, `.\rf.cmd build`, `.\rf.cmd diff`, `.\rf.cmd mem 4g`, `.\rf.cmd env`, `.\rf.cmd terminal`, `.\rf.cmd docker`, `.\rf.cmd diagnostics`).
+- **Model Context Protocol (MCP)**: Connect AI coding assistants (Cursor, Claude Code, Antigravity, Windsurf) to Remote Flow via `/api/mcp` for native tool execution with compiler error parsing.
+
+### 18. Remote Memory & JVM Allocation Tuner (`Alt + Shift + M`)
+- **Visual Memory Allocator**: Tune JVM Max Heap (`-Xmx`), Initial Heap (`-Xms`), Node.js Old Space (`--max-old-space-size`), and Docker limits with live remote server memory gauge (`free -m`).
+- **Native Memory Presets**: Instant selection for 512 MB, 1 GB, 2 GB, 4 GB, 8 GB, or 16 GB, injected seamlessly into Gradle, Maven, Spring Boot, and Node.js runtimes.
+
+### 19. 1-Click Embedded Terminal & Port Conflict Auto-Resolver (`Alt + Shift + T`)
+- **Native IntelliJ Terminal Session**: Automatically opens an interactive SSH terminal inside IntelliJ's built-in Terminal tool window, auto-navigating to the remote project path with jump host support.
+- **Intelligent Port Conflict Resolution**: Leverages IntelliJ's native `NetUtils` to automatically find available socket ports whenever local ports (e.g. 8080, 5432) are occupied.
+
+### 20. Network Disconnect (Wi-Fi) Resilience & Background Process Safe Guard
+- **SIGHUP Drop Protection**: Remote execution is wrapped in a detached process supervisor (`nohup` + `trap '' HUP PIPE`). Switching Wi-Fi networks or temporary internet drops will never kill your running remote server process.
+- **Auto Re-Attachment**: When your connection restores, Remote Flow re-checks PID liveness, restores port forwarding, and re-attaches live log streaming seamlessly.
+- **IDE Exit Confirmation Dialog**: Prompting whether to cleanly stop the server process or keep it running in the background whenever IntelliJ is closed.
+
+### 21. Visual Diff & Side-by-Side Comparison with Server (`Alt + Shift + C`)
+- **IntelliJ Native Diff Viewer**: Right-click any file or directory in Project View or Editor to compare with the remote server version side-by-side with full syntax highlighting.
+- **Folder Sync Preview**: Inspect all modified, added, and deleted files with double-click diff inspection and 1-click sync.
+
+### 22. Remote Environment Variables & Secret Vault
+- **Encrypted Profile Env Vault**: Manage sensitive credentials, API keys, and configurations per server profile without checking them into Git.
+- **1-Click `.env` Import**: Automatically parses and imports local `.env` files directly into your remote execution profile.
 
 ---
 
@@ -114,6 +135,9 @@ Traditional remote development solutions (such as JetBrains Gateway or headless 
 | `Alt + Shift + H` | **Hot Reload** | Recompile and reload current class on remote server in < 1s without restart |
 | `Alt + Shift + S` | **Remote Stop** | Terminate running remote application process |
 | `Alt + Shift + U` | **Fast Sync** | Synchronize all project files to the active remote server |
+| `Alt + Shift + C` | **Compare with Server** | Open visual side-by-side diff comparing local file or folder with remote server |
+| `Alt + Shift + M` | **Remote Memory Tuner** | Open JVM heap allocation and remote memory tuner dialog |
+| `Alt + Shift + T` | **Open SSH Terminal** | Open 1-click interactive SSH terminal session inside IntelliJ |
 | `Alt + Shift + L` | **Show Logs** | Focus and open the unified Remote Flow Log console |
 | `Shift + F10` | **Standard Run** | *(When Run Delegation is enabled)* Automatically routes to Remote Run |
 | `Shift + F9` | **Standard Debug** | *(When Run Delegation is enabled)* Automatically routes to Remote Debug |

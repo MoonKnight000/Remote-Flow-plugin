@@ -77,6 +77,9 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
                 http.createContext("/api/diagnostics", DiagnosticsHandler())
                 http.createContext("/api/mcp", McpHandler(mcpProcessor))
                 http.createContext("/api/diff", DiffHandler())
+                http.createContext("/api/memory", MemoryHandler())
+                http.createContext("/api/env", EnvHandler())
+                http.createContext("/api/terminal", TerminalHandler())
                 http.createContext("/api/exec", ExecHandler())
                 http.createContext("/api/stop", StopHandler())
 
@@ -345,7 +348,7 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
             }
 
             val profile = connectionManager.config.activeProfile
-            val fullCmd = buildRemoteExecutionCommand(rawCmd, profile.javaHome)
+            val fullCmd = buildRemoteExecutionCommand(rawCmd, profile.javaHome, profile)
 
             stream("[AI EXEC] Running command on ${profile.name}: $rawCmd\n\n")
             logService.log("[AI EXEC] Running: $rawCmd", LogCategory.AI, profile.name)
@@ -594,6 +597,72 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
         }
     }
 
+    private inner class MemoryHandler : HttpHandler {
+        override fun handle(exchange: HttpExchange) {
+            val profile = connectionManager.config.activeProfile
+            val queryParams = parseQueryParams(exchange.requestURI.query ?: "")
+            val max = queryParams["max"]
+            val initial = queryParams["initial"]
+            if (!max.isNullOrBlank()) {
+                profile.maxHeapSize = max.trim()
+            }
+            if (!initial.isNullOrBlank()) {
+                profile.initialHeapSize = initial.trim()
+            }
+            val json = buildString {
+                append("{")
+                append("\"status\":\"ok\",")
+                append("\"server\":\"").append(escapeJson(profile.name)).append("\",")
+                append("\"maxHeap\":\"").append(escapeJson(profile.maxHeapSize)).append("\",")
+                append("\"initialHeap\":\"").append(escapeJson(profile.initialHeapSize)).append("\",")
+                append("\"extraJvmArgs\":\"").append(escapeJson(profile.extraJvmArgs)).append("\",")
+                append("\"nodeMemoryLimitMb\":").append(profile.nodeMemoryLimitMb).append(",")
+                append("\"dockerMemoryLimit\":\"").append(escapeJson(profile.dockerMemoryLimit)).append("\"")
+                append("}")
+            }
+            val bytes = json.toByteArray(StandardCharsets.UTF_8)
+            exchange.responseHeaders.set("Content-Type", "application/json; charset=UTF-8")
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+    }
+
+    private inner class EnvHandler : HttpHandler {
+        override fun handle(exchange: HttpExchange) {
+            val profile = connectionManager.config.activeProfile
+            val json = buildString {
+                append("{")
+                append("\"status\":\"ok\",")
+                append("\"server\":\"").append(escapeJson(profile.name)).append("\",")
+                append("\"count\":").append(profile.environmentVariables.size).append(",")
+                append("\"variables\":{")
+                profile.environmentVariables.entries.forEachIndexed { idx, (k, v) ->
+                    if (idx > 0) append(",")
+                    append("\"").append(escapeJson(k)).append("\":\"").append(escapeJson(v)).append("\"")
+                }
+                append("}}")
+            }
+            val bytes = json.toByteArray(StandardCharsets.UTF_8)
+            exchange.responseHeaders.set("Content-Type", "application/json; charset=UTF-8")
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+    }
+
+    private inner class TerminalHandler : HttpHandler {
+        override fun handle(exchange: HttpExchange) {
+            val profile = connectionManager.config.activeProfile
+            ApplicationManager.getApplication().invokeLater {
+                uz.remote.flow.terminal.RemoteTerminalHelper.openTerminal(project, profile)
+            }
+            val resp = "{\"status\":\"ok\",\"message\":\"Opened remote terminal for ${escapeJson(profile.name)}\"}\n"
+            val bytes = resp.toByteArray(StandardCharsets.UTF_8)
+            exchange.responseHeaders.set("Content-Type", "application/json; charset=UTF-8")
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+    }
+
     private fun computeSimpleDiff(local: String, remote: String): String {
         val localLines = local.lines()
         val remoteLines = remote.lines()
@@ -704,7 +773,7 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
             profile.buildCommand.ifBlank { "./gradlew build -x test" }
         }
 
-        val fullCmd = buildRemoteExecutionCommand(rawCmd, profile.javaHome)
+        val fullCmd = buildRemoteExecutionCommand(rawCmd, profile.javaHome, profile)
         stream("\n[AI $actionName] Executing on remote server: $rawCmd\n" + "-".repeat(60) + "\n\n")
         logService.log("[AI $actionName] Executing: $rawCmd", LogCategory.AI, profile.name)
 
@@ -878,6 +947,28 @@ if /i "%ACTION%"=="diff" (
     goto :finish
 )
 
+if /i "%ACTION%"=="mem" (
+    set "MAX_MEM=%~2"
+    if "!MAX_MEM!"=="" (
+        curl.exe -s "http://127.0.0.1:!RF_PORT!/api/memory"
+    ) else (
+        curl.exe -s "http://127.0.0.1:!RF_PORT!/api/memory?max=!MAX_MEM!"
+    )
+    echo.
+    goto :finish
+)
+
+if /i "%ACTION%"=="env" (
+    curl.exe -s "http://127.0.0.1:!RF_PORT!/api/env"
+    echo.
+    goto :finish
+)
+
+if /i "%ACTION%"=="terminal" (
+    curl.exe -s "http://127.0.0.1:!RF_PORT!/api/terminal"
+    goto :finish
+)
+
 if /i "%ACTION%"=="diagnostics" (
     curl.exe -s "http://127.0.0.1:!RF_PORT!/api/diagnostics"
     echo.
@@ -920,7 +1011,7 @@ if /i "%ACTION%"=="exec" (
 )
 
 echo [Remote Flow] Unknown command: %ACTION%
-echo Usage: rf ^<test ^| build ^| sync ^| pull ^| diff [path] ^| docker ^| diagnostics ^| exec ^<cmd^> ^| status^>
+echo Usage: rf ^<test ^| build ^| sync ^| pull ^| diff [path] ^| mem [max] ^| env ^| terminal ^| docker ^| diagnostics ^| exec ^<cmd^> ^| status^>
 exit /b 1
 
 :finish
@@ -1014,6 +1105,22 @@ switch (${'$'}Action.ToLower()) {
         }
         Write-Host ""
     }
+    "mem" {
+        ${'$'}maxMem = if (${'$'}RemainingArgs.Count -gt 0) { ${'$'}RemainingArgs[0] } else { "" }
+        if (${'$'}maxMem) {
+            & curl.exe -s "http://127.0.0.1:${'$'}port/api/memory?max=${'$'}maxMem"
+        } else {
+            & curl.exe -s "http://127.0.0.1:${'$'}port/api/memory"
+        }
+        Write-Host ""
+    }
+    "env" {
+        & curl.exe -s "http://127.0.0.1:${'$'}port/api/env"
+        Write-Host ""
+    }
+    "terminal" {
+        & curl.exe -s "http://127.0.0.1:${'$'}port/api/terminal"
+    }
     "diagnostics" {
         & curl.exe -s "http://127.0.0.1:${'$'}port/api/diagnostics"
         Write-Host ""
@@ -1040,7 +1147,7 @@ switch (${'$'}Action.ToLower()) {
         & curl.exe -s -N -X POST "http://127.0.0.1:${'$'}port/api/exec" --data-binary "${'$'}cmd"
     }
     default {
-        Write-Host "Usage: rf <test | build | sync | pull | diff [path] | docker | diagnostics | exec <command> | status>"
+        Write-Host "Usage: rf <test | build | sync | pull | diff [path] | mem [max] | env | terminal | docker | diagnostics | exec <command> | status>"
         exit 1
     }
 }
@@ -1108,6 +1215,23 @@ case "${'$'}ACTION" in
         fi
         echo ""
         ;;
+    mem)
+        shift
+        MAX="${'$'}1"
+        if [ -n "${'$'}MAX" ]; then
+            curl -s "http://127.0.0.1:${'$'}PORT/api/memory?max=${'$'}MAX"
+        else
+            curl -s "http://127.0.0.1:${'$'}PORT/api/memory"
+        fi
+        echo ""
+        ;;
+    env)
+        curl -s "http://127.0.0.1:${'$'}PORT/api/env"
+        echo ""
+        ;;
+    terminal)
+        curl -s "http://127.0.0.1:${'$'}PORT/api/terminal"
+        ;;
     diagnostics)
         curl -s "http://127.0.0.1:${'$'}PORT/api/diagnostics"
         echo ""
@@ -1135,7 +1259,7 @@ case "${'$'}ACTION" in
         curl -s -N -X POST "http://127.0.0.1:${'$'}PORT/api/exec" --data-binary "${'$'}*"
         ;;
     *)
-        echo "Usage: rf <test|build|sync|pull|diff [path]|docker|diagnostics|exec <cmd>|status>"
+        echo "Usage: rf <test|build|sync|pull|diff [path]|mem [max]|env|terminal|docker|diagnostics|exec <cmd>|status>"
         exit 1
         ;;
 esac
@@ -1160,6 +1284,9 @@ This project is developed locally, but its runtime environment, databases (Postg
   - Sync Files: `.\rf.cmd sync`
   - Pull Remote Files: `.\rf.cmd pull`
   - Compare Diff with Server: `.\rf.cmd diff [path]` (PowerShell: `.\rf.ps1 diff [path]`, Bash: `./rf diff [path]`)
+  - Configure Remote Memory: `.\rf.cmd mem [maxHeap]` (e.g. `.\rf.cmd mem 4g`)
+  - View Environment Variables: `.\rf.cmd env`
+  - Open Remote SSH Terminal: `.\rf.cmd terminal`
   - Manage Remote Docker: `.\rf.cmd docker` / `.\rf.cmd docker logs <container>`
   - Get Error Diagnostics: `.\rf.cmd diagnostics`
   - Execute Remote Command: `.\rf.cmd exec "<command>"`

@@ -24,6 +24,9 @@ dependencies {
     compileOnly(fileTree("C:/Users/Murodjon/AppData/Local/Programs/IntelliJ IDEA/plugins/java/lib") {
         include("**/*.jar")
     })
+    compileOnly(fileTree("C:/Users/Murodjon/AppData/Local/Programs/IntelliJ IDEA/plugins/terminal/lib") {
+        include("**/*.jar")
+    })
 
     implementation("com.hierynomus:sshj:0.38.0")
     implementation("org.slf4j:slf4j-simple:2.0.13")

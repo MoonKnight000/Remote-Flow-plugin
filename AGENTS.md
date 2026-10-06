@@ -10,6 +10,9 @@ This project is developed locally, but its runtime environment, databases (Postg
   - Sync Files: `.\rf.cmd sync`
   - Pull Remote Files: `.\rf.cmd pull`
   - Compare Diff with Server: `.\rf.cmd diff [path]` (PowerShell: `.\rf.ps1 diff [path]`, Bash: `./rf diff [path]`)
+  - Configure Remote Memory: `.\rf.cmd mem [maxHeap]` (e.g. `.\rf.cmd mem 4g`)
+  - View Environment Variables: `.\rf.cmd env`
+  - Open Remote SSH Terminal: `.\rf.cmd terminal`
   - Manage Remote Docker: `.\rf.cmd docker` / `.\rf.cmd docker logs <container>`
   - Get Error Diagnostics: `.\rf.cmd diagnostics`
   - Execute Remote Command: `.\rf.cmd exec "<command>"`

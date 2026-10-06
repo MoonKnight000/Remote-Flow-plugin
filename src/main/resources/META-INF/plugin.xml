@@ -150,7 +150,15 @@
             <action id="RemoteFlow.TerminalAction"
                     class="uz.remote.flow.actions.RemoteFlowTerminalAction"
                     text="Open Remote SSH Terminal"
-                    description="Open interactive terminal session with active server"/>
+                    description="Open interactive terminal session with active server in IntelliJ Terminal">
+                <keyboard-shortcut keymap="$default" first-keystroke="alt shift T"/>
+            </action>
+            <action id="RemoteFlow.MemoryTunerAction"
+                    class="uz.remote.flow.actions.RemoteFlowMemoryTunerAction"
+                    text="Remote Memory Tuning (Heap Limits)..."
+                    description="Tune remote JVM heap (-Xmx/-Xms), Node.js, and Docker memory limits">
+                <keyboard-shortcut keymap="$default" first-keystroke="alt shift M"/>
+            </action>
             <action id="RemoteFlow.BrowseFilesAction"
                     class="uz.remote.flow.actions.RemoteFlowBrowseFilesAction"
                     text="Browse Remote Files..."

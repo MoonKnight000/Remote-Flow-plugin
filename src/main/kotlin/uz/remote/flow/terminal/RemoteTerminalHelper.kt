@@ -18,7 +18,7 @@ object RemoteTerminalHelper {
         if (profile.host.isBlank()) {
             RemoteConnectionManager.getInstance(project).notifyUser(
                 "Remote Flow",
-                "Server profili to'liq sozlanmagan! Avval host va username kiriting.",
+                "Server profile host is empty. Please configure host and username first.",
                 NotificationType.WARNING
             )
             return
@@ -26,7 +26,7 @@ object RemoteTerminalHelper {
 
         val sshCmd = buildSshCommand(profile)
 
-        // If password authentication is used, copy password to clipboard
+        // If password authentication is used, copy password to clipboard for convenience
         if (profile.authType == AuthType.PASSWORD && profile.password.isNotBlank()) {
             try {
                 val sel = StringSelection(profile.password)
@@ -34,7 +34,7 @@ object RemoteTerminalHelper {
             } catch (_: Exception) {}
         }
 
-        // IntelliJ Terminal Tool Window ni faollashtirish
+        // Activate IntelliJ Terminal Tool Window
         val tw = ToolWindowManager.getInstance(project).getToolWindow("Terminal")
         tw?.activate(null)
 
@@ -50,7 +50,7 @@ object RemoteTerminalHelper {
                     NotificationType.INFORMATION
                 )
             } else {
-                // Agar IntelliJ ichki terminali ochilmasa, tashqi PowerShell ochiladi
+                // If internal terminal widget fails, launch external terminal
                 openExternalTerminal(project, profile, sshCmd)
             }
         }
@@ -65,8 +65,16 @@ object RemoteTerminalHelper {
             val keyPath = profile.privateKeyPath.replace('\\', '/')
             sb.append(" -i \"").append(keyPath).append("\"")
         }
+        if (profile.jumpHost.isNotBlank()) {
+            val jUser = if (profile.jumpUser.isNotBlank()) "${profile.jumpUser}@" else ""
+            sb.append(" -J ").append("${jUser}${profile.jumpHost}:${profile.jumpPort}")
+        }
         val user = profile.user.ifBlank { "root" }
         sb.append(" ").append(user).append("@").append(profile.host)
+        if (profile.remoteProjectPath.isNotBlank()) {
+            val cdPath = profile.remoteProjectPath.trimEnd('/')
+            sb.append(" -t \"cd '$cdPath' && exec \\\$SHELL -l\"")
+        }
         return sb.toString()
     }
 

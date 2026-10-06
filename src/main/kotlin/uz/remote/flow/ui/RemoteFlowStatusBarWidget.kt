@@ -266,6 +266,19 @@ class RemoteFlowStatusBarWidget(private val project: Project) : CustomStatusBarW
                     }
                 })
 
+                group.add(object : AnAction("💻 Open Remote SSH Terminal", "Open interactive SSH shell in IntelliJ Terminal", com.intellij.icons.AllIcons.Nodes.Console) {
+                    override fun actionPerformed(e: AnActionEvent) {
+                        uz.remote.flow.terminal.RemoteTerminalHelper.openTerminal(project, active)
+                    }
+                })
+
+                val memLabel = if (active.maxHeapSize.isNotBlank()) " (-Xmx${active.maxHeapSize})" else ""
+                group.add(object : AnAction("🧠 Tune Remote Memory$memLabel...", "Configure remote JVM heap and memory limits", com.intellij.icons.AllIcons.Actions.Profile) {
+                    override fun actionPerformed(e: AnActionEvent) {
+                        uz.remote.flow.memory.RemoteMemoryTunerDialog(project, active).show()
+                    }
+                })
+
                 val isMonitoring = active.monitorMode != "OFF"
                 if (isMonitoring) {
                     latestMetrics?.let { m ->
