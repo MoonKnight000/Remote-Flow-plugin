@@ -31,6 +31,14 @@ data class PortMapping(
     var direction: ForwardDirection = ForwardDirection.LOCAL_TO_REMOTE
 )
 
+data class DockerContainer(
+    val id: String = "",
+    val names: String = "",
+    val image: String = "",
+    val status: String = "",
+    val ports: String = ""
+)
+
 data class ServerProfile(
     var id: String = UUID.randomUUID().toString(),
     var name: String = "Server 1 (Dev)",
@@ -60,6 +68,10 @@ data class ServerProfile(
     var browserUrl: String = "http://localhost:8080",
     var preRunCommand: String = "",
     var postRunCommand: String = "",
+    var jumpHost: String = "",
+    var jumpPort: Int = 22,
+    var jumpUser: String = "",
+    var jumpPrivateKeyPath: String = "",
     var forwardedPorts: MutableList<PortMapping> = defaultPorts()
 ) {
     override fun toString(): String = name + " (" + host + ")"
@@ -94,6 +106,10 @@ data class ServerProfile(
             browserUrl = browserUrl,
             preRunCommand = preRunCommand,
             postRunCommand = postRunCommand,
+            jumpHost = jumpHost,
+            jumpPort = jumpPort,
+            jumpUser = jumpUser,
+            jumpPrivateKeyPath = jumpPrivateKeyPath,
             forwardedPorts = forwardedPorts.map { it.copy() }.toMutableList()
         )
     }

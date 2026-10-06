@@ -31,7 +31,7 @@ class FastSyncManager(private val project: Project) {
     ) {
         val basePath = profile.localProjectPath.ifBlank { project.basePath ?: "" }
         if (basePath.isBlank()) {
-            onLog("[ERROR] Local directory topilmadi!\n")
+            onLog("[ERROR] Local directory not found!\n")
             onComplete(false)
             return
         }
@@ -208,11 +208,11 @@ class FastSyncManager(private val project: Project) {
     ) {
         val basePath = profile.localProjectPath.ifBlank { project.basePath ?: "" }
         if (basePath.isBlank()) {
-            onLog("[ERROR] Local directory topilmadi!\n")
+            onLog("[ERROR] Local directory not found!\n")
             onComplete(false)
             return
         }
-        onLog("[SYNC -> " + profile.name + "] Sinxronizatsiya boshlandi: " + basePath + " -> " + profile.remoteProjectPath + "\n")
+        onLog("[SYNC -> " + profile.name + "] Synchronization started: " + basePath + " -> " + profile.remoteProjectPath + "\n")
 
         val rsyncAvailable = checkRsync(profile)
         connectionManager.createDirectory(profile, profile.remoteProjectPath) { _, _ ->
@@ -336,7 +336,7 @@ class FastSyncManager(private val project: Project) {
         val basePath = profile.localProjectPath.ifBlank { project.basePath ?: "" }
         val prefix = if (isAutoSync) "AUTO-SYNC" else "SYNC SPECIFIC"
         if (basePath.isBlank()) {
-            onLog("[$prefix ERROR] Local directory topilmadi!\n")
+            onLog("[$prefix ERROR] Local directory not found!\n")
             onComplete(false)
             return
         }
@@ -344,7 +344,7 @@ class FastSyncManager(private val project: Project) {
         val cleanRelative = relativePath.trimStart('/', '\\').replace('\\', '/')
         val localFile = java.io.File(basePath, cleanRelative)
         if (!localFile.exists()) {
-            onLog("[$prefix ERROR] Fayl yoki papka topilmadi: " + localFile.path + "\n")
+            onLog("[$prefix ERROR] File or directory not found: " + localFile.path + "\n")
             onComplete(false)
             return
         }
@@ -396,7 +396,7 @@ class FastSyncManager(private val project: Project) {
                             connectionManager.executeRemoteCommand("sed -i 's/\\r$//' \"$remoteTarget\" 2>/dev/null || true; chmod +x \"$remoteTarget\" 2>/dev/null || true", "", {}, {})
                         }
                         val duration = System.currentTimeMillis() - startTime
-                        onLog("[$prefix SUCCESS] ✅ '$cleanRelative' serverga muvaffaqiyatli yuklandi (${duration}ms)\n")
+                        onLog("[$prefix SUCCESS] ✅ '$cleanRelative' successfully uploaded to server (${duration}ms)\n")
                         onComplete(true)
                     } else {
                         onLog("[RSYNC NOTICE] Rsync returned error (code: $code). Uploading via SFTP...\n")
@@ -411,9 +411,9 @@ class FastSyncManager(private val project: Project) {
                                 }
                                 val duration = System.currentTimeMillis() - startTime
                                 if (ok) {
-                                    onLog("[$prefix SUCCESS] ✅ '$cleanRelative' serverga muvaffaqiyatli yuklandi (${duration}ms)\n")
+                                    onLog("[$prefix SUCCESS] ✅ '$cleanRelative' successfully uploaded to server (${duration}ms)\n")
                                 } else {
-                                    onLog("[$prefix ERROR] ❌ '$cleanRelative' serverga yuklanmadi!\n")
+                                    onLog("[$prefix ERROR] ❌ Failed to upload '$cleanRelative' to server!\n")
                                 }
                                 onComplete(ok)
                             }
@@ -432,9 +432,9 @@ class FastSyncManager(private val project: Project) {
                             }
                             val duration = System.currentTimeMillis() - startTime
                             if (success) {
-                                onLog("[$prefix SUCCESS] ✅ '$cleanRelative' serverga muvaffaqiyatli yuklandi (${duration}ms)\n")
+                                onLog("[$prefix SUCCESS] ✅ '$cleanRelative' successfully uploaded to server (${duration}ms)\n")
                             } else {
-                                onLog("[$prefix ERROR] ❌ '$cleanRelative' serverga yuklanmadi!\n")
+                                onLog("[$prefix ERROR] ❌ Failed to upload '$cleanRelative' to server!\n")
                             }
                             onComplete(success)
                         }
@@ -445,6 +445,172 @@ class FastSyncManager(private val project: Project) {
                 onComplete(false)
             } finally {
                 try { tempAskPass?.delete() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    /**
+     * Pulls / downloads changes from remote server directory to local project.
+     * Uses reverse Rsync or SFTP to synchronize remote-generated files or migrations.
+     */
+    fun pullFromRemote(
+        profile: ServerProfile = connectionManager.config.activeProfile,
+        onLog: (String) -> Unit = {},
+        onComplete: (Boolean) -> Unit = {}
+    ) {
+        val basePath = profile.localProjectPath.ifBlank { project.basePath ?: "" }
+        if (basePath.isBlank()) {
+            onLog("[PULL ERROR] Local project path not found!\n")
+            onComplete(false)
+            return
+        }
+
+        onLog("[PULL <- ${profile.name}] Pulling remote changes: ${profile.remoteProjectPath} -> $basePath\n")
+
+        val rsyncAvailable = checkRsync(profile)
+        if (rsyncAvailable) {
+            parallelPool.submit {
+                var tempAskPass: java.io.File? = null
+                try {
+                    val exe = resolveRsyncExecutable(profile)
+                    val rsyncCmd = mutableListOf(exe)
+                    rsyncCmd.addAll(buildBaseRsyncOptions(profile))
+
+                    val rsyncSource = "${profile.user}@${profile.host}:${profile.remoteProjectPath.trimEnd('/')}/"
+                    val rsyncDest = convertToRsyncPath(basePath.trimEnd('/') + "/", exe)
+
+                    val sshCmdStr = buildSshCommand(profile, exe)
+                    rsyncCmd.addAll(listOf("-e", sshCmdStr, rsyncSource, rsyncDest))
+
+                    if (profile.authType == uz.remote.flow.ssh.AuthType.PASSWORD && profile.password.isNotBlank()) {
+                        tempAskPass = java.io.File.createTempFile("rf_askpass_", ".bat")
+                        tempAskPass.writeText("@echo off\r\necho " + profile.password + "\r\n", Charsets.US_ASCII)
+                        tempAskPass.setExecutable(true)
+                    }
+
+                    val pb = ProcessBuilder(rsyncCmd).redirectErrorStream(true)
+                    val exeFile = java.io.File(exe)
+                    if (exeFile.parentFile != null) {
+                        val rsyncDir = exeFile.parentFile.absolutePath
+                        val currentPath = pb.environment()["PATH"] ?: ""
+                        pb.environment()["PATH"] = rsyncDir + java.io.File.pathSeparator + currentPath
+                    }
+                    if (tempAskPass != null) {
+                        pb.environment()["SSH_ASKPASS"] = tempAskPass.absolutePath
+                        pb.environment()["SSH_ASKPASS_REQUIRE"] = "force"
+                        pb.environment()["DISPLAY"] = "dummy:0"
+                    }
+
+                    val process = pb.start()
+                    process.inputStream.bufferedReader().useLines { lines ->
+                        lines.forEach { onLog(it + "\n") }
+                    }
+                    val code = process.waitFor()
+                    if (code == 0) {
+                        onLog("[PULL] ✓ Successfully downloaded remote changes to local project.\n")
+                        com.intellij.openapi.vfs.LocalFileSystem.getInstance().refresh(true)
+                    } else {
+                        onLog("[PULL ERROR] Rsync pull exited with code $code\n")
+                    }
+                    onComplete(code == 0)
+                } catch (e: Exception) {
+                    onLog("[PULL ERROR] " + (e.message ?: e.toString()) + "\n")
+                    onComplete(false)
+                } finally {
+                    try { tempAskPass?.delete() } catch (_: Exception) {}
+                }
+            }
+        } else {
+            parallelPool.submit {
+                try {
+                    onLog("[PULL SFTP] Downloading remote files via SSH/SFTP...\n")
+                    val client = connectionManager.getActiveSshClient()
+                    if (client == null || !connectionManager.isConnected) {
+                        onLog("[PULL ERROR] SSH connection is not active.\n")
+                        onComplete(false)
+                        return@submit
+                    }
+                    client.newSFTPClient().use { sftp ->
+                        sftp.get(profile.remoteProjectPath, net.schmizz.sshj.xfer.FileSystemFile(basePath))
+                    }
+                    onLog("[PULL] ✓ SFTP pull completed successfully.\n")
+                    com.intellij.openapi.vfs.LocalFileSystem.getInstance().refresh(true)
+                    onComplete(true)
+                } catch (e: Exception) {
+                    onLog("[PULL ERROR] SFTP download failed: ${e.message}\n")
+                    onComplete(false)
+                }
+            }
+        }
+    }
+
+    /**
+     * Git-Aware fast synchronization:
+     * Inspects local `git status --porcelain` to identify changed/added files,
+     * and synchronizes ONLY those files in sub-second time.
+     */
+    fun syncGitModified(
+        profile: ServerProfile = connectionManager.config.activeProfile,
+        onLog: (String) -> Unit = {},
+        onComplete: (Boolean) -> Unit = {}
+    ) {
+        val basePath = profile.localProjectPath.ifBlank { project.basePath ?: "" }
+        val gitDir = java.io.File(basePath, ".git")
+        if (!gitDir.exists()) {
+            syncSingleServer(profile, onLog, onComplete)
+            return
+        }
+
+        parallelPool.submit {
+            try {
+                onLog("[GIT SYNC] Inspecting git status in $basePath...\n")
+                val pb = ProcessBuilder("git", "status", "--porcelain")
+                    .directory(java.io.File(basePath))
+                    .redirectErrorStream(true)
+                val p = pb.start()
+                val lines = p.inputStream.bufferedReader().readLines()
+                p.waitFor()
+
+                val excludes = uz.remote.flow.ssh.parseExcludeList(profile.excludePatterns)
+                val filesToSync = mutableListOf<String>()
+
+                for (raw in lines) {
+                    if (raw.length < 4) continue
+                    val status = raw.substring(0, 2)
+                    if (status.contains("D")) continue
+                    var filePath = raw.substring(3).trim().replace("\"", "").replace('\\', '/')
+                    if (filePath.contains(" -> ")) {
+                        filePath = filePath.substringAfter(" -> ").trim()
+                    }
+                    val f = java.io.File(basePath, filePath)
+                    if (f.exists() && !uz.remote.flow.ssh.isPathExcluded(filePath, f.name, excludes)) {
+                        filesToSync.add(filePath)
+                    }
+                }
+
+                if (filesToSync.isEmpty()) {
+                    onLog("[GIT SYNC] ✓ No modified files found in working tree. Already synchronized.\n")
+                    onComplete(true)
+                    return@submit
+                }
+
+                onLog("[GIT SYNC] Found ${filesToSync.size} modified files. Fast-syncing...\n")
+                val latch = java.util.concurrent.CountDownLatch(filesToSync.size)
+                var allOk = true
+
+                for (rel in filesToSync) {
+                    syncSpecificPath(profile, rel, isAutoSync = false, onLog = onLog) { ok ->
+                        if (!ok) allOk = false
+                        latch.countDown()
+                    }
+                }
+
+                latch.await(45, TimeUnit.SECONDS)
+                onLog("[GIT SYNC] ✓ Completed git-aware sync (${filesToSync.size} files).\n")
+                onComplete(allOk)
+            } catch (e: Exception) {
+                onLog("[GIT SYNC ERROR] ${e.message}. Falling back to full sync.\n")
+                syncSingleServer(profile, onLog, onComplete)
             }
         }
     }

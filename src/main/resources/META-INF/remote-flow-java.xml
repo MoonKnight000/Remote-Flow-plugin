@@ -1,0 +1,5 @@
+<idea-plugin>
+    <extensions defaultExtensionNs="com.intellij">
+        <programRunner implementation="uz.remote.flow.execution.RemoteFlowDebuggerRunner" order="first"/>
+    </extensions>
+</idea-plugin>

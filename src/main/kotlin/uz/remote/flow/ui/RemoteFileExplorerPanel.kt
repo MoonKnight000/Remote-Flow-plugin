@@ -621,7 +621,7 @@ class RemoteFileExplorerPanel(private val project: Project) : JPanel(BorderLayou
         if (item.isDirectory || item.isParentDir) return
         val profile = settings.activeProfileOrNull ?: return
 
-        statusLabel.text = "Fayl ochilmoqda: ${item.name}..."
+        statusLabel.text = "Opening file: ${item.name}..."
         val safeHost = profile.host.replace(":", "_").replace("/", "_")
         val localCacheDir = File(System.getProperty("java.io.tmpdir"), "remote-flow-cache/$safeHost")
         val targetLocalFile = File(localCacheDir, item.path.trimStart('/'))

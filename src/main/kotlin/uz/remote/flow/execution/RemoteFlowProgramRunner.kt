@@ -80,33 +80,34 @@ class RemoteFlowProgramRunner : ProgramRunner<RunnerSettings> {
                 return false
             }
 
-            // Exclude databases, docker, terminal, scripts, scratches, frontend
+            // Exclude databases, docker, terminal, scratches
             if (typeId.contains("Database", ignoreCase = true) ||
                 className.contains("Database", ignoreCase = true) ||
                 className.startsWith("com.intellij.database") ||
                 typeId.contains("Docker", ignoreCase = true) ||
                 typeId.contains("Kubernetes", ignoreCase = true) ||
-                typeId.contains("Shell", ignoreCase = true) ||
-                typeId.contains("ShRunConfiguration", ignoreCase = true) ||
-                typeId.contains("Bash", ignoreCase = true) ||
-                typeId.contains("Batch", ignoreCase = true) ||
                 typeId.contains("Terminal", ignoreCase = true) ||
-                typeId.contains("Scratch", ignoreCase = true) ||
-                typeId.contains("NodeJS", ignoreCase = true) ||
-                typeId.contains("npm", ignoreCase = true) ||
-                typeId.contains("Yarn", ignoreCase = true) ||
-                typeId.contains("Vite", ignoreCase = true) ||
-                typeId.contains("JavaScript", ignoreCase = true)
+                typeId.contains("Scratch", ignoreCase = true)
             ) {
                 return false
             }
 
-            // Whitelist standard application run configurations
+            // Whitelist standard application run configurations across all JetBrains IDEs
             val isAppType = typeId == "Application" ||
                     typeId.contains("SpringBoot", ignoreCase = true) ||
                     typeId.contains("Kotlin", ignoreCase = true) ||
+                    typeId.contains("Python", ignoreCase = true) ||
+                    typeId.contains("Node", ignoreCase = true) ||
+                    typeId.contains("Go", ignoreCase = true) ||
+                    typeId.contains("Rust", ignoreCase = true) ||
+                    typeId.contains("Cargo", ignoreCase = true) ||
+                    typeId.contains("Php", ignoreCase = true) ||
+                    typeId.contains("Npm", ignoreCase = true) ||
                     className.contains("ApplicationConfiguration", ignoreCase = true) ||
                     className.contains("SpringBoot", ignoreCase = true) ||
+                    className.contains("Python", ignoreCase = true) ||
+                    className.contains("Node", ignoreCase = true) ||
+                    className.contains("Go", ignoreCase = true) ||
                     configName.endsWith("Application", ignoreCase = true) ||
                     (typeId.contains("Gradle", ignoreCase = true) &&
                             (configName.contains("bootRun", ignoreCase = true) || configName.contains("run", ignoreCase = true)))
@@ -117,8 +118,12 @@ class RemoteFlowProgramRunner : ProgramRunner<RunnerSettings> {
 
     override fun execute(environment: ExecutionEnvironment) {
         if (environment.executor.id == DefaultDebugExecutor.EXECUTOR_ID) {
-            RemoteFlowDebuggerRunner().execute(environment)
-            return
+            val debugRunner = ProgramRunner.PROGRAM_RUNNER_EP.extensionList
+                .firstOrNull { it.runnerId == "RemoteFlowDebuggerRunner" }
+            if (debugRunner != null) {
+                debugRunner.execute(environment)
+                return
+            }
         }
 
         val state = if (environment.runProfile is RemoteFlowRunConfiguration) {

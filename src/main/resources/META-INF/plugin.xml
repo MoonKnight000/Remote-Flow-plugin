@@ -50,7 +50,7 @@
     ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
-    <depends>com.intellij.modules.java</depends>
+    <depends optional="true" config-file="remote-flow-java.xml">com.intellij.modules.java</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <projectConfigurable parentId="tools"
@@ -75,7 +75,6 @@
                     factoryClass="uz.remote.flow.ui.RemoteFlowLogToolWindowFactory"/>
 
         <programRunner implementation="uz.remote.flow.execution.RemoteFlowProgramRunner" order="first"/>
-        <programRunner implementation="uz.remote.flow.execution.RemoteFlowDebuggerRunner" order="first"/>
 
         <configurationType implementation="uz.remote.flow.run.RemoteFlowConfigurationType"/>
 
@@ -83,6 +82,11 @@
 
         <notificationGroup id="Remote Flow" displayType="BALLOON" isLogByDefault="true"/>
     </extensions>
+
+    <applicationListeners>
+        <listener class="uz.remote.flow.execution.RemoteFlowProjectCloseListener"
+                  topic="com.intellij.openapi.project.ProjectManagerListener"/>
+    </applicationListeners>
 
     <actions>
         <!-- Group in Tools Menu -->
@@ -98,10 +102,24 @@
                     description="Sync all project changes to active remote server">
                 <keyboard-shortcut keymap="$default" first-keystroke="alt shift U"/>
             </action>
+            <action id="RemoteFlow.GitSyncAction"
+                    class="uz.remote.flow.actions.RemoteFlowGitSyncAction"
+                    text="Git-Aware Fast Sync (Modified Files Only)"
+                    description="Synchronize only modified and untracked git files in milliseconds"/>
+            <action id="RemoteFlow.PullAction"
+                    class="uz.remote.flow.actions.RemoteFlowPullAction"
+                    text="Pull Changes from Remote Server"
+                    description="Download updated files from remote server into local workspace"/>
             <action id="RemoteFlow.SyncPreviewAction"
                     class="uz.remote.flow.actions.RemoteFlowSyncPreviewAction"
                     text="Preview Sync Diff (Dry Run)..."
                     description="Preview files that will be uploaded or deleted on remote server"/>
+            <action id="RemoteFlow.CompareAction"
+                    class="uz.remote.flow.actions.RemoteFlowCompareWithRemoteAction"
+                    text="Compare with Remote Server (Diff)..."
+                    description="Compare selected file or directory with active remote server in visual diff viewer">
+                <keyboard-shortcut keymap="$default" first-keystroke="alt shift C"/>
+            </action>
             <action id="RemoteFlow.HotReloadAction"
                     class="uz.remote.flow.actions.RemoteFlowHotReloadAction"
                     text="Remote Hot Reload / Fast Recompile"
@@ -165,6 +183,10 @@
                     class="uz.remote.flow.actions.RemoteFlowSyncSelectionAction"
                     text="Sync Selected to Remote"
                     description="Sync selected file or folder to remote server"/>
+            <action id="RemoteFlow.CompareWithRemoteAction"
+                    class="uz.remote.flow.actions.RemoteFlowCompareWithRemoteAction"
+                    text="Compare with Remote (Diff)..."
+                    description="Compare selected file or directory with active remote server in visual diff viewer"/>
             <action id="RemoteFlow.ProjectViewSyncPreviewAction"
                     class="uz.remote.flow.actions.RemoteFlowSyncPreviewAction"
                     text="Preview Sync Diff..."
@@ -178,6 +200,10 @@
         <!-- Context menu in Editor -->
         <group id="RemoteFlow.EditorGroup" text="Remote Flow" popup="true" icon="icons/remoteFlow.svg">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <action id="RemoteFlow.EditorCompareWithRemoteAction"
+                    class="uz.remote.flow.actions.RemoteFlowCompareWithRemoteAction"
+                    text="Compare with Remote (Diff)..."
+                    description="Compare current file with remote server version in visual diff viewer"/>
             <action id="RemoteFlow.EditorHotReloadAction"
                     class="uz.remote.flow.actions.RemoteFlowHotReloadAction"
                     text="Hot Reload This File"
@@ -194,6 +220,19 @@
                     class="uz.remote.flow.actions.RemoteFlowDebugAction"
                     text="Debug on Remote Server"
                     description="Run application in debug mode on remote server"/>
+        </group>
+
+        <!-- Context menu in Editor Tab -->
+        <group id="RemoteFlow.EditorTabGroup" text="Remote Flow" popup="true" icon="icons/remoteFlow.svg">
+            <add-to-group group-id="EditorTabPopupMenu" anchor="last"/>
+            <action id="RemoteFlow.EditorTabCompareAction"
+                    class="uz.remote.flow.actions.RemoteFlowCompareWithRemoteAction"
+                    text="Compare with Remote (Diff)..."
+                    description="Compare active tab file with remote server in visual diff viewer"/>
+            <action id="RemoteFlow.EditorTabSyncAction"
+                    class="uz.remote.flow.actions.RemoteFlowSyncSelectionAction"
+                    text="Sync to Remote"
+                    description="Sync active tab file to remote server"/>
         </group>
     </actions>
 </idea-plugin>

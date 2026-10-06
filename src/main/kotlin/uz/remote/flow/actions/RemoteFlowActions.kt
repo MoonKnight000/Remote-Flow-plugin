@@ -86,6 +86,56 @@ class RemoteFlowSyncAction : AnAction("Sync Project to Remote", "Upload project 
     }
 }
 
+class RemoteFlowPullAction : AnAction("Pull from Remote Server", "Download latest files from remote server into local workspace", AllIcons.Actions.Download) {
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        val syncMgr = FastSyncManager(project)
+        val connMgr = RemoteConnectionManager.getInstance(project)
+        val settings = RemoteFlowSettings.getInstance(project)
+        val p = settings.activeProfile
+
+        connMgr.notifyUser("Remote Flow: Pull", "Downloading files from ${p.name} to local workspace...")
+        syncMgr.pullFromRemote(
+            profile = p,
+            onLog = {},
+            onComplete = { success ->
+                if (success) {
+                    connMgr.notifyUser("Remote Flow: Pull Complete", "Downloaded changes from remote server!", NotificationType.INFORMATION)
+                } else {
+                    connMgr.notifyUser("Remote Flow: Pull Error", "Failed to pull files from server. Check logs.", NotificationType.WARNING)
+                }
+            }
+        )
+    }
+}
+
+class RemoteFlowGitSyncAction : AnAction("Git-Aware Fast Sync", "Sync only git modified and untracked files in sub-second time", AllIcons.Actions.Upload) {
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        val syncMgr = FastSyncManager(project)
+        val connMgr = RemoteConnectionManager.getInstance(project)
+        val settings = RemoteFlowSettings.getInstance(project)
+        val p = settings.activeProfile
+
+        if (!uz.remote.flow.ssh.RemoteSafetyHelper.checkProductionSafe(project, p, "Git-Aware Sync")) {
+            return
+        }
+
+        connMgr.notifyUser("Remote Flow: Git Sync", "Scanning and fast-syncing git modified files...")
+        syncMgr.syncGitModified(
+            profile = p,
+            onLog = {},
+            onComplete = { success ->
+                if (success) {
+                    connMgr.notifyUser("Remote Flow: Git Sync Done", "Git changes synchronized to ${p.name}!", NotificationType.INFORMATION)
+                } else {
+                    connMgr.notifyUser("Remote Flow: Git Sync Error", "Error syncing git changes. Check logs.", NotificationType.WARNING)
+                }
+            }
+        )
+    }
+}
+
 class RemoteFlowSyncSelectionAction : AnAction("Sync Selected File/Folder to Remote", "Upload selected file or directory to remote server", RemoteFlowIcons.REMOTE_FLOW) {
     override fun update(e: AnActionEvent) {
         val project = e.project

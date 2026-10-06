@@ -83,12 +83,23 @@ class ServerProfileEditDialog(
         font = com.intellij.util.ui.JBUI.Fonts.smallFont()
     }
 
+    private val jumpHostField = JBTextField(profile.jumpHost)
+    private val jumpPortField = JBTextField(profile.jumpPort.toString())
+    private val jumpUserField = JBTextField(profile.jumpUser)
+    private val jumpKeyPathField = TextFieldWithBrowseButton()
+
+    private val btnImportSshConfig = JButton("Import ~/.ssh/config", AllIcons.Actions.Download)
+    private val btnAutoDetectStack = JButton("Auto-Detect Stack", AllIcons.Actions.Lightning)
+
     init {
         title = if (isNew) "Add New Server Profile" else "Edit Server Profile: " + profile.name
         nameField.emptyText.text = "e.g. My Remote Server (Optional)"
         hostField.emptyText.text = "e.g. 192.168.1.100 or myserver.com (Required)"
         userField.emptyText.text = "e.g. root or ubuntu (Required, default: root)"
         remotePathField.emptyText.text = "e.g. /root/remote-flow/myapp (Optional)"
+        jumpHostField.emptyText.text = "e.g. bastion.corp.com (Optional Jump/Bastion Host)"
+        jumpUserField.emptyText.text = "e.g. bastion-user (Optional)"
+        jumpKeyPathField.addBrowseFolderListener("Select Jump Host Key", null, project, FileChooserDescriptorFactory.createSingleFileDescriptor())
         init()
         loadValues()
     }
@@ -160,6 +171,10 @@ class ServerProfileEditDialog(
         browserUrlField.text = profile.browserUrl.ifBlank { "http://localhost:8080" }
         preRunCommandField.text = profile.preRunCommand
         postRunCommandField.text = profile.postRunCommand
+        jumpHostField.text = profile.jumpHost
+        jumpPortField.text = profile.jumpPort.toString()
+        jumpUserField.text = profile.jumpUser
+        jumpKeyPathField.text = profile.jumpPrivateKeyPath
         lblTestStatus.text = ""
     }
 
@@ -425,19 +440,75 @@ class ServerProfileEditDialog(
             )
         }
 
+        btnImportSshConfig.addActionListener {
+            val entries = uz.remote.flow.ssh.SshConfigParser.parseConfigFile()
+            if (entries.isEmpty()) {
+                Messages.showInfoMessage(project, "No SSH host definitions found in ~/.ssh/config.", "SSH Config")
+                return@addActionListener
+            }
+            val options = entries.map { "${it.hostAlias} (${it.user}@${it.hostName}:${it.port})" }.toTypedArray()
+            val selectedIdx = Messages.showChooseDialog(
+                project,
+                "Select an SSH host configuration to import:",
+                "Import from ~/.ssh/config",
+                Messages.getQuestionIcon(),
+                options,
+                options[0]
+            )
+            if (selectedIdx >= 0 && selectedIdx < entries.size) {
+                val entry = entries[selectedIdx]
+                nameField.text = entry.hostAlias
+                hostField.text = entry.hostName
+                portField.text = entry.port.toString()
+                userField.text = entry.user
+                if (entry.identityFile.isNotBlank()) {
+                    authTypeBox.selectedIndex = 1
+                    keyPathField.text = entry.identityFile
+                }
+                if (entry.proxyJump.isNotBlank()) {
+                    jumpHostField.text = entry.proxyJump
+                }
+                val fName = resolveLocalFolderName()
+                val u = entry.user.ifBlank { "root" }
+                remotePathField.text = if (u == "root") "/root/remote-flow/$fName" else "/home/$u/remote-flow/$fName"
+            }
+        }
+
+        btnAutoDetectStack.addActionListener {
+            val localDir = java.io.File(localFolderField.text.trim().ifBlank { project.basePath ?: "" })
+            val preset = uz.remote.flow.stack.ProjectStackDetector.detect(localDir)
+            runCommandField.text = preset.runCommand
+            debugCommandField.text = preset.debugCommand
+            testCommandField.text = preset.testCommand
+            buildCommandField.text = preset.buildCommand
+            excludePatternsField.text = preset.recommendedExcludes
+            Messages.showInfoMessage(
+                contentPane,
+                "Detected Stack: ${preset.stack.displayName}\n\nPre-filled optimal Run, Debug, Test, Build commands and file exclude patterns!",
+                "Tech Stack Detected"
+            )
+        }
+
         val form = JPanel(GridBagLayout())
         val gbc = GridBagConstraints()
         gbc.insets = JBUI.insets(4, 4, 4, 4)
         gbc.anchor = GridBagConstraints.WEST
         gbc.fill = GridBagConstraints.HORIZONTAL
 
-        // Row 0: Name & Environment
-        gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.0; form.add(JBLabel("Profile Name:"), gbc)
+        // Quick Setup Toolbar
+        val quickBar = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+        quickBar.add(btnImportSshConfig)
+        quickBar.add(btnAutoDetectStack)
+        gbc.gridx = 0; gbc.gridy = 0; gbc.gridwidth = 4; gbc.weightx = 1.0; form.add(quickBar, gbc)
+        gbc.gridwidth = 1
+
+        // Row 1: Name & Environment
+        gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.0; form.add(JBLabel("Profile Name:"), gbc)
         gbc.gridx = 1; gbc.weightx = 0.6; form.add(nameField, gbc)
         gbc.gridx = 2; gbc.weightx = 0.0; form.add(JBLabel("Environment:"), gbc)
         gbc.gridx = 3; gbc.weightx = 0.4; form.add(envBox, gbc)
 
-        // Row 1: Host & Port
+        // Row 2: Host & Port
         gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.0; form.add(JBLabel("Host IP: *"), gbc)
         gbc.gridx = 1; gbc.weightx = 0.7; form.add(hostField, gbc)
         gbc.gridx = 2; gbc.weightx = 0.0; form.add(JBLabel("Port:"), gbc)
@@ -458,8 +529,21 @@ class ServerProfileEditDialog(
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(credentialCardPanel, gbc)
         gbc.gridwidth = 1
 
-        // Row 5: Local Dir
-        gbc.gridx = 0; gbc.gridy = 5; gbc.weightx = 0.0; form.add(JBLabel("Local Dir:"), gbc)
+        // Row 5: Jump Host / Bastion (ProxyJump)
+        gbc.gridx = 0; gbc.gridy = 5; gbc.weightx = 0.0; form.add(JBLabel("Jump Host (Proxy):"), gbc)
+        val jumpP = JPanel(BorderLayout(4, 0))
+        jumpP.add(jumpHostField, BorderLayout.CENTER)
+        val jumpEast = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
+        jumpEast.add(JBLabel("Port:"))
+        jumpEast.add(jumpPortField.apply { columns = 3 })
+        jumpEast.add(JBLabel("User:"))
+        jumpEast.add(jumpUserField.apply { columns = 6 })
+        jumpP.add(jumpEast, BorderLayout.EAST)
+        gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(jumpP, gbc)
+        gbc.gridwidth = 1
+
+        // Row 6: Local Dir
+        gbc.gridx = 0; gbc.gridy = 6; gbc.weightx = 0.0; form.add(JBLabel("Local Dir:"), gbc)
         gbc.gridx = 1; gbc.gridwidth = 3; gbc.weightx = 1.0; form.add(localFolderField, gbc)
         gbc.gridwidth = 1
 
@@ -668,6 +752,10 @@ class ServerProfileEditDialog(
         p.browserUrl = browserUrlField.text.trim().ifBlank { "http://localhost:8080" }
         p.preRunCommand = preRunCommandField.text.trim()
         p.postRunCommand = postRunCommandField.text.trim()
+        p.jumpHost = jumpHostField.text.trim()
+        p.jumpPort = jumpPortField.text.trim().toIntOrNull() ?: 22
+        p.jumpUser = jumpUserField.text.trim()
+        p.jumpPrivateKeyPath = jumpKeyPathField.text.trim()
     }
 
     override fun doOKAction() {

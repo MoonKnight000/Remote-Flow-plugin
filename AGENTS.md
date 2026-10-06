@@ -8,7 +8,16 @@ This project is developed locally, but its runtime environment, databases (Postg
   - Run Tests: `.\rf.cmd test` (PowerShell: `.\rf.ps1 test`, Bash: `./rf test`)
   - Run Build: `.\rf.cmd build` (PowerShell: `.\rf.ps1 build`, Bash: `./rf build`)
   - Sync Files: `.\rf.cmd sync`
+  - Pull Remote Files: `.\rf.cmd pull`
+  - Compare Diff with Server: `.\rf.cmd diff [path]` (PowerShell: `.\rf.ps1 diff [path]`, Bash: `./rf diff [path]`)
+  - Manage Remote Docker: `.\rf.cmd docker` / `.\rf.cmd docker logs <container>`
+  - Get Error Diagnostics: `.\rf.cmd diagnostics`
   - Execute Remote Command: `.\rf.cmd exec "<command>"`
   - Check Status: `.\rf.cmd status`
+  - Model Context Protocol (MCP): Connect via `http://127.0.0.1:45789/api/mcp` for native AI agent tool execution.
 
 The CLI communicates with the active IntelliJ IDEA Remote Flow bridge, automatically differential-syncs all modified files to the remote server, runs the command inside the server environment, and streams live colorized output and exit codes back to your terminal.
+
+## 🌐 MANDATORY LANGUAGE AND LOCALIZATION RULE:
+- 🔤 **ALL plugin UI texts, dialogs, labels, button texts, notifications, error messages, status logs, tooltips, action descriptions, code comments, and documentation MUST BE STRICTLY 100% IN ENGLISH.**
+- ❌ **NEVER write Uzbek, Russian, or any non-English language** inside the plugin codebase, UI dialogs, notifications, logs, XML configs, CLI tools, or documentation. The plugin is built for global developers on the JetBrains Marketplace.

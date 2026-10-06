@@ -289,7 +289,7 @@ class RemoteFlowAutoSyncService(private val project: Project) : FileDocumentMana
                 for (delPath in filesToDelete) {
                     val remoteTarget = profile.remoteProjectPath.trimEnd('/') + "/" + delPath
                     connManager.executeRemoteCommand("rm -rf \"$remoteTarget\"", "", {}, { _ -> })
-                    logService.log("[AUTO-SYNC] 🗑️ '$delPath' serverdan muvaffaqiyatli o'chirildi (deleted)\n", LogCategory.SYNC, profile.name)
+                    logService.log("[AUTO-SYNC] 🗑️ '$delPath' deleted from server\n", LogCategory.SYNC, profile.name)
                 }
             }
 
@@ -321,20 +321,20 @@ class RemoteFlowAutoSyncService(private val project: Project) : FileDocumentMana
                         if (success) {
                             for (filePath in filesToSync) {
                                 logService.log(
-                                    message = "[AUTO-SYNC] ⚡ '$filePath' serverga muvaffaqiyatli yuklandi (synced)\n",
+                                    message = "[AUTO-SYNC] ⚡ '$filePath' uploaded to server (synced)\n",
                                     category = LogCategory.SYNC,
                                     serverName = profile.name
                                 )
                             }
-                            val summary = if (count == 1) "'${filesToSync.first()}' serverga yuklandi (${duration}ms)"
-                                          else "$count ta fayl serverga yuklandi (${duration}ms)"
+                            val summary = if (count == 1) "'${filesToSync.first()}' synced to server (${duration}ms)"
+                                          else "$count files synced to server (${duration}ms)"
                             connManager.notifyUser(
                                 title = "Real-Time Auto-Sync ⚡",
                                 message = summary,
                                 type = NotificationType.INFORMATION
                             )
                             logService.log(
-                                message = "[AUTO-SYNC SUCCESS] ✅ $count ta fayl ${profile.name} serveriga muvaffaqiyatli sinxronlandi (${duration}ms)\n",
+                                message = "[AUTO-SYNC SUCCESS] ✅ $count file(s) successfully synced to server ${profile.name} (${duration}ms)\n",
                                 category = LogCategory.SYNC,
                                 serverName = profile.name
                             )
@@ -362,13 +362,13 @@ class RemoteFlowAutoSyncService(private val project: Project) : FileDocumentMana
                         onComplete = { fileSuccess ->
                             if (fileSuccess) {
                                 logService.log(
-                                    message = "[AUTO-SYNC] ⚡ '$relPath' serverga muvaffaqiyatli yuklandi (synced)\n",
+                                    message = "[AUTO-SYNC] ⚡ '$relPath' uploaded to server (synced)\n",
                                     category = LogCategory.SYNC,
                                     serverName = profile.name
                                 )
                             } else {
                                 logService.log(
-                                    message = "[AUTO-SYNC ERROR] ❌ '$relPath' serverga yuklanmadi!\n",
+                                    message = "[AUTO-SYNC ERROR] ❌ Failed to upload '$relPath' to server!\n",
                                     category = LogCategory.SYNC,
                                     serverName = profile.name,
                                     isError = true

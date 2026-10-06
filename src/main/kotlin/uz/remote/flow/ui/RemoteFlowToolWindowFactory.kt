@@ -82,6 +82,7 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
 
     // Remote Files Explorer Panel & Unified Logger
     val filesPanel = RemoteFileExplorerPanel(project)
+    val dockerPanel = RemoteDockerPanel(project)
     private val tabbedPane = JBTabbedPane()
     private val logService = uz.remote.flow.logging.RemoteFlowLogService.getInstance(project)
 
@@ -138,12 +139,19 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
         // Setup Header Control Bar
         add(createHeaderPanel(), BorderLayout.NORTH)
 
-        // 5 Logical Tabs with native IntelliJ AllIcons
+        // 6 Logical Tabs with native IntelliJ AllIcons
         tabbedPane.addTab("Dashboard", AllIcons.Nodes.Services, createDashboardTab())
         tabbedPane.addTab("Files", AllIcons.Nodes.Folder, filesPanel)
         tabbedPane.addTab("Run & Debug", AllIcons.Actions.Execute, createRunDebugTab())
+        tabbedPane.addTab("Docker", AllIcons.Nodes.Deploy, dockerPanel)
         tabbedPane.addTab("Port Forwarding", AllIcons.General.Web, createPortsTab())
         tabbedPane.addTab("Terminal", RemoteFlowIcons.TERMINAL, createTerminalTab())
+
+        tabbedPane.addChangeListener {
+            if (tabbedPane.selectedIndex == tabbedPane.indexOfTab("Docker")) {
+                dockerPanel.loadContainers()
+            }
+        }
 
         add(tabbedPane, BorderLayout.CENTER)
 
@@ -153,6 +161,9 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
                 ApplicationManager.getApplication().invokeLater {
                     updateConnectionStateUi(connected)
                     updateOverviewSummary(settings.activeProfile)
+                    if (connected) {
+                        dockerPanel.loadContainers()
+                    }
                     if (!connected) {
                         updateProcessStateUi(false)
                     }

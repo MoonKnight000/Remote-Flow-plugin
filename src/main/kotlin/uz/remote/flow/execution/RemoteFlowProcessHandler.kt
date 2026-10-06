@@ -38,7 +38,15 @@ class RemoteFlowProcessHandler(
     }
 
     override fun detachProcessImpl() {
-        destroyProcessImpl()
+        if (!isStopping.compareAndSet(false, true)) return
+
+        val connMgr = RemoteConnectionManager.getInstance(project)
+        val logService = RemoteFlowLogService.getInstance(project)
+        notifyTextAvailable("[REMOTE FLOW] Detaching from remote process (leaving it running on ${profile.name})...\n", ProcessOutputType.SYSTEM)
+        logService.log("[REMOTE FLOW] Detaching from remote process on ${profile.name}...\n", LogCategory.RUN, profile.name)
+
+        connMgr.detachRemoteProcess()
+        notifyProcessDetached()
     }
 
     override fun detachIsDefault(): Boolean = false
@@ -70,6 +78,12 @@ class RemoteFlowProcessHandler(
     fun finishProcess(exitCode: Int) {
         if (!isProcessTerminated && !isProcessTerminating) {
             notifyProcessTerminated(exitCode)
+        }
+    }
+
+    fun markDetached() {
+        if (!isProcessTerminated && !isProcessTerminating) {
+            notifyProcessDetached()
         }
     }
 }

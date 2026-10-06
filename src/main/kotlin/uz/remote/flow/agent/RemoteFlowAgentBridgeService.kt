@@ -67,10 +67,16 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
 
                 http.executor = Executors.newCachedThreadPool()
 
+                val mcpProcessor = RemoteFlowMcpProcessor(project)
                 http.createContext("/api/status", StatusHandler())
                 http.createContext("/api/test", TestHandler())
                 http.createContext("/api/build", BuildHandler())
                 http.createContext("/api/sync", SyncHandler())
+                http.createContext("/api/pull", PullHandler())
+                http.createContext("/api/docker", DockerHandler())
+                http.createContext("/api/diagnostics", DiagnosticsHandler())
+                http.createContext("/api/mcp", McpHandler(mcpProcessor))
+                http.createContext("/api/diff", DiffHandler())
                 http.createContext("/api/exec", ExecHandler())
                 http.createContext("/api/stop", StopHandler())
 
@@ -240,6 +246,9 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
                 append("\"project\":\"").append(escapeJson(project.name)).append("\",")
                 append("\"projectPath\":\"").append(escapeJson(project.basePath ?: "")).append("\",")
                 append("\"connected\":").append(isConn).append(",")
+                append("\"processRunning\":").append(connectionManager.isProcessRunning).append(",")
+                append("\"runningCommand\":\"").append(escapeJson(connectionManager.runningCommand ?: "")).append("\",")
+                append("\"remotePid\":").append(connectionManager.remoteProcessPid ?: "null").append(",")
                 append("\"activeProfile\":{")
                 append("\"name\":\"").append(escapeJson(profile.name)).append("\",")
                 append("\"host\":\"").append(escapeJson(profile.host)).append("\",")
@@ -370,6 +379,144 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
         }
     }
 
+    @Volatile private var lastExecutionOutput: String = ""
+
+    private inner class PullHandler : HttpHandler {
+        override fun handle(exchange: HttpExchange) {
+            exchange.responseHeaders.set("Content-Type", "text/plain; charset=UTF-8")
+            exchange.sendResponseHeaders(200, 0)
+            val os = exchange.responseBody
+            fun stream(msg: String) {
+                try {
+                    os.write(msg.toByteArray(StandardCharsets.UTF_8))
+                    os.flush()
+                } catch (_: Exception) {}
+            }
+
+            val profile = connectionManager.config.activeProfile
+            stream("[AI PULL] Downloading remote changes from ${profile.name} (${profile.host})...\n")
+            val latch = CountDownLatch(1)
+            var pullSuccess = false
+
+            syncManager.pullFromRemote(
+                profile = profile,
+                onLog = { stream(it) },
+                onComplete = { success ->
+                    pullSuccess = success
+                    latch.countDown()
+                }
+            )
+            try { latch.await(120, TimeUnit.SECONDS) } catch (_: Exception) {}
+            val exitCode = if (pullSuccess) 0 else 1
+            writeExitCodeFile(exitCode)
+            stream("\n[AI PULL COMPLETED: exit code $exitCode]\n")
+            try { os.close() } catch (_: Exception) {}
+        }
+    }
+
+    private inner class DockerHandler : HttpHandler {
+        override fun handle(exchange: HttpExchange) {
+            val queryParams = parseQueryParams(exchange.requestURI.query ?: "")
+            val action = queryParams["action"]?.lowercase() ?: "list"
+            val name = queryParams["name"] ?: ""
+
+            when (action) {
+                "list" -> {
+                    val latch = CountDownLatch(1)
+                    val resultList = mutableListOf<uz.remote.flow.ssh.DockerContainer>()
+                    connectionManager.listDockerContainers { containers ->
+                        resultList.addAll(containers)
+                        latch.countDown()
+                    }
+                    try { latch.await(10, TimeUnit.SECONDS) } catch (_: Exception) {}
+
+                    val json = buildString {
+                        append("{\"status\":\"ok\",\"containers\":[")
+                        resultList.forEachIndexed { idx, c ->
+                            if (idx > 0) append(",")
+                            append("{\"id\":\"").append(escapeJson(c.id)).append("\",")
+                            append("\"name\":\"").append(escapeJson(c.names)).append("\",")
+                            append("\"image\":\"").append(escapeJson(c.image)).append("\",")
+                            append("\"status\":\"").append(escapeJson(c.status)).append("\",")
+                            append("\"ports\":\"").append(escapeJson(c.ports)).append("\"}")
+                        }
+                        append("]}")
+                    }
+                    val bytes = json.toByteArray(StandardCharsets.UTF_8)
+                    exchange.responseHeaders.set("Content-Type", "application/json; charset=UTF-8")
+                    exchange.sendResponseHeaders(200, bytes.size.toLong())
+                    exchange.responseBody.use { it.write(bytes) }
+                }
+                "restart" -> {
+                    val latch = CountDownLatch(1)
+                    var ok = false
+                    var msg = ""
+                    connectionManager.restartDockerContainer(name) { success, out ->
+                        ok = success
+                        msg = out
+                        latch.countDown()
+                    }
+                    try { latch.await(20, TimeUnit.SECONDS) } catch (_: Exception) {}
+                    val resp = "{\"success\":$ok,\"output\":\"${escapeJson(msg)}\"}"
+                    val bytes = resp.toByteArray(StandardCharsets.UTF_8)
+                    exchange.responseHeaders.set("Content-Type", "application/json; charset=UTF-8")
+                    exchange.sendResponseHeaders(200, bytes.size.toLong())
+                    exchange.responseBody.use { it.write(bytes) }
+                }
+                "logs" -> {
+                    val latch = CountDownLatch(1)
+                    var logOut = ""
+                    connectionManager.getDockerContainerLogs(name, 100) { out ->
+                        logOut = out
+                        latch.countDown()
+                    }
+                    try { latch.await(15, TimeUnit.SECONDS) } catch (_: Exception) {}
+                    val bytes = logOut.toByteArray(StandardCharsets.UTF_8)
+                    exchange.responseHeaders.set("Content-Type", "text/plain; charset=UTF-8")
+                    exchange.sendResponseHeaders(200, bytes.size.toLong())
+                    exchange.responseBody.use { it.write(bytes) }
+                }
+                else -> {
+                    val err = "Unknown action: $action\n".toByteArray(StandardCharsets.UTF_8)
+                    exchange.sendResponseHeaders(400, err.size.toLong())
+                    exchange.responseBody.use { it.write(err) }
+                }
+            }
+        }
+    }
+
+    private inner class DiagnosticsHandler : HttpHandler {
+        override fun handle(exchange: HttpExchange) {
+            val diagnostics = DiagnosticsExtractor.extract(lastExecutionOutput)
+            val json = buildString {
+                append("{\"status\":\"ok\",\"count\":${diagnostics.size},\"diagnostics\":[")
+                diagnostics.forEachIndexed { idx, d ->
+                    if (idx > 0) append(",")
+                    append("{\"file\":\"").append(escapeJson(d.file)).append("\",")
+                    append("\"line\":").append(d.line).append(",")
+                    append("\"column\":").append(d.column).append(",")
+                    append("\"message\":\"").append(escapeJson(d.message)).append("\"}")
+                }
+                append("]}")
+            }
+            val bytes = json.toByteArray(StandardCharsets.UTF_8)
+            exchange.responseHeaders.set("Content-Type", "application/json; charset=UTF-8")
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+    }
+
+    private inner class McpHandler(private val processor: RemoteFlowMcpProcessor) : HttpHandler {
+        override fun handle(exchange: HttpExchange) {
+            val body = exchange.requestBody.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+            val resp = processor.handleMcpRequest(body)
+            val bytes = resp.toByteArray(StandardCharsets.UTF_8)
+            exchange.responseHeaders.set("Content-Type", "application/json; charset=UTF-8")
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+    }
+
     private inner class StopHandler : HttpHandler {
         override fun handle(exchange: HttpExchange) {
             connectionManager.stopRemoteProcess()
@@ -379,6 +526,99 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
             exchange.sendResponseHeaders(200, b.size.toLong())
             exchange.responseBody.use { it.write(b) }
         }
+    }
+
+    private inner class DiffHandler : HttpHandler {
+        override fun handle(exchange: HttpExchange) {
+            exchange.responseHeaders.set("Content-Type", "text/plain; charset=UTF-8")
+            val queryParams = parseQueryParams(exchange.requestURI.query ?: "")
+            val targetPath = queryParams["path"]?.trim() ?: ""
+
+            if (targetPath.isNotBlank()) {
+                val profile = connectionManager.config.activeProfile
+                val basePath = project.basePath ?: ""
+                val localFile = File(basePath, targetPath)
+                val localContent = if (localFile.exists() && localFile.isFile) localFile.readText(StandardCharsets.UTF_8) else ""
+                val remotePath = "${profile.remoteProjectPath.trimEnd('/')}/$targetPath"
+
+                val latch = CountDownLatch(1)
+                var remoteContent: String? = null
+                uz.remote.flow.files.RemoteFileManager(project).readFileContent(profile, remotePath) { content, _ ->
+                    remoteContent = content
+                    latch.countDown()
+                }
+                try { latch.await(10, TimeUnit.SECONDS) } catch (_: Exception) {}
+
+                val sb = StringBuilder()
+                sb.append("--- local: ").append(targetPath).append("\n")
+                sb.append("+++ remote (").append(profile.name).append("): ").append(remotePath).append("\n")
+                if (remoteContent == null) {
+                    sb.append("[FILE NOT FOUND ON REMOTE SERVER]\n")
+                } else if (localContent == remoteContent) {
+                    sb.append("[IDENTICAL - No differences found]\n")
+                } else {
+                    sb.append(computeSimpleDiff(localContent, remoteContent!!))
+                }
+                val bytes = sb.toString().toByteArray(StandardCharsets.UTF_8)
+                exchange.sendResponseHeaders(200, bytes.size.toLong())
+                exchange.responseBody.use { it.write(bytes) }
+            } else {
+                val latch = CountDownLatch(1)
+                var items: List<uz.remote.flow.sync.SyncDiffItem> = emptyList()
+                syncManager.previewDryRunDiff(onResult = {
+                    items = it
+                    latch.countDown()
+                })
+                try { latch.await(15, TimeUnit.SECONDS) } catch (_: Exception) {}
+
+                val sb = StringBuilder()
+                val profile = connectionManager.config.activeProfile
+                sb.append("Remote Flow Diff: Local vs ").append(profile.name).append(" (").append(profile.host).append(")\n")
+                sb.append("=".repeat(60)).append("\n")
+                if (items.isEmpty()) {
+                    sb.append("All files are up to date. No differences found.\n")
+                } else {
+                    items.forEach { item ->
+                        val symbol = when (item.changeType) {
+                            uz.remote.flow.sync.SyncChangeType.ADDED -> "[+ NEW]     "
+                            uz.remote.flow.sync.SyncChangeType.MODIFIED -> "[~ MODIFIED]"
+                            uz.remote.flow.sync.SyncChangeType.DELETED -> "[- DELETED] "
+                        }
+                        sb.append(symbol).append(" ").append(item.relativePath).append("\n")
+                    }
+                }
+                val bytes = sb.toString().toByteArray(StandardCharsets.UTF_8)
+                exchange.sendResponseHeaders(200, bytes.size.toLong())
+                exchange.responseBody.use { it.write(bytes) }
+            }
+        }
+    }
+
+    private fun computeSimpleDiff(local: String, remote: String): String {
+        val localLines = local.lines()
+        val remoteLines = remote.lines()
+        val sb = StringBuilder()
+        var i = 0
+        var j = 0
+        while (i < localLines.size || j < remoteLines.size) {
+            val l = if (i < localLines.size) localLines[i] else null
+            val r = if (j < remoteLines.size) remoteLines[j] else null
+            if (l == r) {
+                i++
+                j++
+            } else {
+                if (l != null && (r == null || !remoteLines.contains(l))) {
+                    sb.append("- ").append(l).append("\n")
+                    i++
+                } else if (r != null) {
+                    sb.append("+ ").append(r).append("\n")
+                    j++
+                } else {
+                    i++; j++
+                }
+            }
+        }
+        return sb.toString()
     }
 
     private fun executeStreamingAction(exchange: HttpExchange, isTest: Boolean) {
@@ -471,6 +711,7 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
         // 4. Stream command execution
         val execLatch = CountDownLatch(1)
         var exitCode = 0
+        val outputBuffer = StringBuilder()
 
         val cancelHandle = connectionManager.executeStreamingCommand(
             cmd = fullCmd,
@@ -478,10 +719,12 @@ class RemoteFlowAgentBridgeService(private val project: Project) : Disposable {
             timeoutSeconds = 900,
             onOutput = { out ->
                 stream(out)
+                outputBuffer.append(out)
                 logService.log(out, LogCategory.AI, profile.name)
             },
             onComplete = { code ->
                 exitCode = code
+                lastExecutionOutput = outputBuffer.toString()
                 execLatch.countDown()
             }
         )
@@ -619,6 +862,44 @@ if /i "%ACTION%"=="sync" (
     goto :finish
 )
 
+if /i "%ACTION%"=="pull" (
+    curl.exe -s -N -X POST "http://127.0.0.1:!RF_PORT!/api/pull"
+    goto :finish
+)
+
+if /i "%ACTION%"=="diff" (
+    set "TARGET_PATH=%~2"
+    if "!TARGET_PATH!"=="" (
+        curl.exe -s "http://127.0.0.1:!RF_PORT!/api/diff"
+    ) else (
+        curl.exe -s "http://127.0.0.1:!RF_PORT!/api/diff?path=!TARGET_PATH!"
+    )
+    echo.
+    goto :finish
+)
+
+if /i "%ACTION%"=="diagnostics" (
+    curl.exe -s "http://127.0.0.1:!RF_PORT!/api/diagnostics"
+    echo.
+    goto :finish
+)
+
+if /i "%ACTION%"=="docker" (
+    set "SUBCMD=%~2"
+    if /i "!SUBCMD!"=="logs" (
+        curl.exe -s "http://127.0.0.1:!RF_PORT!/api/docker?action=logs&name=%~3"
+        goto :finish
+    )
+    if /i "!SUBCMD!"=="restart" (
+        curl.exe -s -X POST "http://127.0.0.1:!RF_PORT!/api/docker?action=restart&name=%~3"
+        echo.
+        goto :finish
+    )
+    curl.exe -s "http://127.0.0.1:!RF_PORT!/api/docker?action=list"
+    echo.
+    goto :finish
+)
+
 if /i "%ACTION%"=="status" (
     curl.exe -s "http://127.0.0.1:!RF_PORT!/api/status"
     echo.
@@ -639,7 +920,7 @@ if /i "%ACTION%"=="exec" (
 )
 
 echo [Remote Flow] Unknown command: %ACTION%
-echo Usage: rf ^<test ^| build ^| sync ^| exec ^<command^> ^| status^>
+echo Usage: rf ^<test ^| build ^| sync ^| pull ^| diff [path] ^| docker ^| diagnostics ^| exec ^<cmd^> ^| status^>
 exit /b 1
 
 :finish
@@ -721,6 +1002,35 @@ switch (${'$'}Action.ToLower()) {
     "sync" {
         & curl.exe -s -N -X POST "http://127.0.0.1:${'$'}port/api/sync"
     }
+    "pull" {
+        & curl.exe -s -N -X POST "http://127.0.0.1:${'$'}port/api/pull"
+    }
+    "diff" {
+        ${'$'}target = if (${'$'}RemainingArgs.Count -gt 0) { ${'$'}RemainingArgs[0] } else { "" }
+        if (${'$'}target) {
+            & curl.exe -s "http://127.0.0.1:${'$'}port/api/diff?path=${'$'}target"
+        } else {
+            & curl.exe -s "http://127.0.0.1:${'$'}port/api/diff"
+        }
+        Write-Host ""
+    }
+    "diagnostics" {
+        & curl.exe -s "http://127.0.0.1:${'$'}port/api/diagnostics"
+        Write-Host ""
+    }
+    "docker" {
+        ${'$'}sub = if (${'$'}RemainingArgs.Count -gt 0) { ${'$'}RemainingArgs[0].ToLower() } else { "list" }
+        ${'$'}tName = if (${'$'}RemainingArgs.Count -gt 1) { ${'$'}RemainingArgs[1] } else { "" }
+        if (${'$'}sub -eq "logs") {
+            & curl.exe -s "http://127.0.0.1:${'$'}port/api/docker?action=logs&name=${'$'}tName"
+        } elseif (${'$'}sub -eq "restart") {
+            & curl.exe -s -X POST "http://127.0.0.1:${'$'}port/api/docker?action=restart&name=${'$'}tName"
+            Write-Host ""
+        } else {
+            & curl.exe -s "http://127.0.0.1:${'$'}port/api/docker?action=list"
+            Write-Host ""
+        }
+    }
     "status" {
         & curl.exe -s "http://127.0.0.1:${'$'}port/api/status"
         Write-Host ""
@@ -730,7 +1040,7 @@ switch (${'$'}Action.ToLower()) {
         & curl.exe -s -N -X POST "http://127.0.0.1:${'$'}port/api/exec" --data-binary "${'$'}cmd"
     }
     default {
-        Write-Host "Usage: rf <test | build | sync | exec <command> | status>"
+        Write-Host "Usage: rf <test | build | sync | pull | diff [path] | docker | diagnostics | exec <command> | status>"
         exit 1
     }
 }
@@ -785,8 +1095,36 @@ fi
 
 ACTION="${'$'}{1:-status}"
 case "${'$'}ACTION" in
-    test|build|sync)
+    test|build|sync|pull)
         curl -s -N -X POST "http://127.0.0.1:${'$'}PORT/api/${'$'}ACTION"
+        ;;
+    diff)
+        shift
+        TARGET="${'$'}1"
+        if [ -n "${'$'}TARGET" ]; then
+            curl -s "http://127.0.0.1:${'$'}PORT/api/diff?path=${'$'}TARGET"
+        else
+            curl -s "http://127.0.0.1:${'$'}PORT/api/diff"
+        fi
+        echo ""
+        ;;
+    diagnostics)
+        curl -s "http://127.0.0.1:${'$'}PORT/api/diagnostics"
+        echo ""
+        ;;
+    docker)
+        shift
+        SUB="${'$'}{1:-list}"
+        TARGET="${'$'}2"
+        if [ "${'$'}SUB" = "logs" ]; then
+            curl -s "http://127.0.0.1:${'$'}PORT/api/docker?action=logs&name=${'$'}TARGET"
+        elif [ "${'$'}SUB" = "restart" ]; then
+            curl -s -X POST "http://127.0.0.1:${'$'}PORT/api/docker?action=restart&name=${'$'}TARGET"
+            echo ""
+        else
+            curl -s "http://127.0.0.1:${'$'}PORT/api/docker?action=list"
+            echo ""
+        fi
         ;;
     status)
         curl -s "http://127.0.0.1:${'$'}PORT/api/status"
@@ -797,7 +1135,7 @@ case "${'$'}ACTION" in
         curl -s -N -X POST "http://127.0.0.1:${'$'}PORT/api/exec" --data-binary "${'$'}*"
         ;;
     *)
-        echo "Usage: rf <test|build|sync|exec <cmd>|status>"
+        echo "Usage: rf <test|build|sync|pull|diff [path]|docker|diagnostics|exec <cmd>|status>"
         exit 1
         ;;
 esac
@@ -820,10 +1158,19 @@ This project is developed locally, but its runtime environment, databases (Postg
   - Run Tests: `.\rf.cmd test` (PowerShell: `.\rf.ps1 test`, Bash: `./rf test`)
   - Run Build: `.\rf.cmd build` (PowerShell: `.\rf.ps1 build`, Bash: `./rf build`)
   - Sync Files: `.\rf.cmd sync`
+  - Pull Remote Files: `.\rf.cmd pull`
+  - Compare Diff with Server: `.\rf.cmd diff [path]` (PowerShell: `.\rf.ps1 diff [path]`, Bash: `./rf diff [path]`)
+  - Manage Remote Docker: `.\rf.cmd docker` / `.\rf.cmd docker logs <container>`
+  - Get Error Diagnostics: `.\rf.cmd diagnostics`
   - Execute Remote Command: `.\rf.cmd exec "<command>"`
   - Check Status: `.\rf.cmd status`
+  - Model Context Protocol (MCP): Connect via `http://127.0.0.1:45789/api/mcp` for native AI agent tool execution.
 
 The CLI communicates with the active IntelliJ IDEA Remote Flow bridge, automatically differential-syncs all modified files to the remote server, runs the command inside the server environment, and streams live colorized output and exit codes back to your terminal.
+
+## 🌐 MANDATORY LANGUAGE AND LOCALIZATION RULE:
+- 🔤 **ALL plugin UI texts, dialogs, labels, button texts, notifications, error messages, status logs, tooltips, action descriptions, code comments, and documentation MUST BE STRICTLY 100% IN ENGLISH.**
+- ❌ **NEVER write Uzbek, Russian, or any non-English language** inside the plugin codebase, UI dialogs, notifications, logs, XML configs, CLI tools, or documentation. The plugin is built for global developers on the JetBrains Marketplace.
 """
     }
 }

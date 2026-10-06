@@ -18,7 +18,9 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -74,6 +76,10 @@ class RemoteConnectionManager(private val project: Project) {
         private set
     @Volatile var runningCommand: String? = null
         private set
+    @Volatile var remoteProcessPid: Long? = null
+        private set
+    private val isExplicitStopRequested = AtomicBoolean(false)
+    private val isExplicitDetachRequested = AtomicBoolean(false)
     @Volatile private var activeSession: net.schmizz.sshj.connection.channel.direct.Session? = null
     @Volatile private var activeCommand: net.schmizz.sshj.connection.channel.direct.Session.Command? = null
     @Volatile var activeProcessHandler: uz.remote.flow.execution.RemoteFlowProcessHandler? = null
@@ -396,7 +402,7 @@ class RemoteConnectionManager(private val project: Project) {
     fun connect(profile: ServerProfile = config.activeProfile, onSuccess: () -> Unit, onError: (Throwable) -> Unit) {
         executor.submit {
             try {
-                disconnect()
+                disconnect(cleanProcess = false)
 
                 val client = createSshClient(connectTimeoutMs = 8000, readTimeoutMs = 15000)
                 client.connect(profile.host, profile.port)
@@ -409,9 +415,10 @@ class RemoteConnectionManager(private val project: Project) {
 
                 notifyUser("Remote Flow: Connected", "Connected successfully to " + profile.name, NotificationType.INFORMATION)
                 project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).connectionStateChanged(true, profile)
+                checkAndAttachRemoteProcess(profile)
                 onSuccess()
             } catch (t: Throwable) {
-                disconnect()
+                disconnect(cleanProcess = false)
                 project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).connectionStateChanged(false, profile)
                 onError(t)
             }
@@ -675,6 +682,20 @@ class RemoteConnectionManager(private val project: Project) {
         onComplete: (Int) -> Unit
     ) = executeRemoteCommand(cmd, workingDir, false, onOutput, onComplete)
 
+    fun executeRemoteCommand(
+        cmd: String,
+        onComplete: (output: String, exitCode: Int) -> Unit
+    ) {
+        val sb = StringBuilder()
+        executeRemoteCommand(
+            cmd = cmd,
+            workingDir = "",
+            isLongRunning = false,
+            onOutput = { sb.append(it) },
+            onComplete = { code -> onComplete(sb.toString(), code) }
+        )
+    }
+
     fun executeStreamingCommand(
         cmd: String,
         workingDir: String = config.activeProfile.remoteProjectPath,
@@ -782,12 +803,38 @@ class RemoteConnectionManager(private val project: Project) {
 
             var session: net.schmizz.sshj.connection.channel.direct.Session? = null
             try {
-                val fullCmd = if (workingDir.isNotBlank()) "cd \"$workingDir\" && $cmd" else cmd
-                session = client.startSession()
-
                 if (isLongRunning) {
+                    isExplicitStopRequested.set(false)
+                    isExplicitDetachRequested.set(false)
+
+                    val rfRunDir = "\$HOME/.remote-flow/run"
+                    val scriptLines = listOf(
+                        "#!/bin/bash",
+                        "trap '' HUP PIPE",
+                        "mkdir -p $rfRunDir",
+                        "echo \$\$ > $rfRunDir/app.pid",
+                        if (workingDir.isNotBlank()) "cd \"$workingDir\" || exit 1" else "",
+                        cmd,
+                        "EXIT_CODE=${'$'}?",
+                        "echo ${'$'}EXIT_CODE > $rfRunDir/app.exit",
+                        "rm -f $rfRunDir/app.pid",
+                        "exit ${'$'}EXIT_CODE"
+                    ).filter { it.isNotBlank() }.joinToString("\n")
+
+                    val b64 = java.util.Base64.getEncoder().encodeToString(scriptLines.toByteArray(StandardCharsets.UTF_8))
+                    val launchWrapperCmd = (
+                        "mkdir -p $rfRunDir && " +
+                        "rm -f $rfRunDir/app.exit $rfRunDir/app.pid && " +
+                        "echo \"$b64\" | base64 -d > $rfRunDir/app.sh && " +
+                        "chmod +x $rfRunDir/app.sh && " +
+                        "nohup $rfRunDir/app.sh > $rfRunDir/app.log 2>&1 & " +
+                        "sleep 0.3 && " +
+                        "tail -n +1 -f $rfRunDir/app.log --pid=$(cat $rfRunDir/app.pid 2>/dev/null) 2>/dev/null || tail -n +1 -f $rfRunDir/app.log"
+                    )
+
+                    session = client.startSession()
                     session.allocateDefaultPTY()
-                    val command = session.exec(fullCmd)
+                    val command = session.exec(launchWrapperCmd)
                     isProcessRunning = true
                     runningCommand = cmd
                     activeSession = session
@@ -797,21 +844,41 @@ class RemoteConnectionManager(private val project: Project) {
                         project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).processStateChanged(true, cmd)
                     } catch (_: Exception) {}
 
-                    BufferedReader(InputStreamReader(command.inputStream, java.nio.charset.StandardCharsets.UTF_8)).use { reader ->
-                        var line: String?
-                        while (reader.readLine().also { line = it } != null) {
-                            val raw = line ?: ""
-                            val cleaned = cleanProgressRemnants(raw)
-                            if (cleaned.isNotBlank() && cleanAnsiText(cleaned).trim().isNotBlank()) {
-                                onOutput(cleaned + "\n")
+                    var normalEof = false
+                    try {
+                        BufferedReader(InputStreamReader(command.inputStream, StandardCharsets.UTF_8)).use { reader ->
+                            var line: String?
+                            while (reader.readLine().also { line = it } != null) {
+                                val raw = line ?: ""
+                                val cleaned = cleanProgressRemnants(raw)
+                                if (cleaned.isNotBlank() && cleanAnsiText(cleaned).trim().isNotBlank()) {
+                                    onOutput(cleaned + "\n")
+                                }
                             }
                         }
+                        command.join()
+                        normalEof = true
+                    } catch (_: Exception) {
+                        // Connection dropped or stream broken
                     }
 
-                    command.join()
-                    val exitStatus = command.exitStatus ?: 0
-                    onComplete(exitStatus)
+                    if (isExplicitStopRequested.get()) {
+                        onComplete(130)
+                        return@submit
+                    } else if (isExplicitDetachRequested.get()) {
+                        return@submit
+                    } else if (normalEof) {
+                        val exitStatus = command.exitStatus ?: 0
+                        onComplete(exitStatus)
+                    } else {
+                        onOutput("\n[REMOTE FLOW] ⚠️ Connection interrupted (Wi-Fi or network switch).\n[REMOTE FLOW] ⚡ The application continues running safely on the server.\n[REMOTE FLOW] 🔄 Auto-reconnecting to server...\n")
+                        logService.log("[SSH INTERRUPTED] Network drop detected. Process kept alive on server. Reconnecting...", LogCategory.RUN, config.activeProfile.name)
+                        triggerAutoReconnect()
+                        return@submit
+                    }
                 } else {
+                    val fullCmd = if (workingDir.isNotBlank()) "cd \"$workingDir\" && $cmd" else cmd
+                    session = client.startSession()
                     // Non-interactive short command: DO NOT allocate PTY!
                     val command = session.exec(fullCmd)
 
@@ -821,7 +888,7 @@ class RemoteConnectionManager(private val project: Project) {
                     // Drain stderr in background to prevent SSH buffer deadlock
                     val errFuture = executor.submit {
                         try {
-                            BufferedReader(InputStreamReader(command.errorStream, java.nio.charset.StandardCharsets.UTF_8)).use { errReader ->
+                            BufferedReader(InputStreamReader(command.errorStream, StandardCharsets.UTF_8)).use { errReader ->
                                 var errLine: String?
                                 while (errReader.readLine().also { errLine = it } != null) {
                                     val raw = errLine ?: ""
@@ -835,7 +902,7 @@ class RemoteConnectionManager(private val project: Project) {
                     }
 
                     // Read stdout
-                    BufferedReader(InputStreamReader(command.inputStream, java.nio.charset.StandardCharsets.UTF_8)).use { reader ->
+                    BufferedReader(InputStreamReader(command.inputStream, StandardCharsets.UTF_8)).use { reader ->
                         var line: String?
                         while (reader.readLine().also { line = it } != null) {
                             val raw = line ?: ""
@@ -854,23 +921,151 @@ class RemoteConnectionManager(private val project: Project) {
                     onComplete(exitStatus)
                 }
             } catch (e: Exception) {
-                onOutput("[ERROR]: " + (e.message ?: e.toString()) + "\n")
-                onComplete(-1)
+                if (!isExplicitStopRequested.get() && !isExplicitDetachRequested.get()) {
+                    if (isLongRunning) {
+                        onOutput("\n[REMOTE FLOW] ⚠️ Connection interrupted (Wi-Fi or network switch).\n[REMOTE FLOW] ⚡ Process kept alive on server. Auto-reconnecting...\n")
+                        triggerAutoReconnect()
+                        return@submit
+                    } else {
+                        onOutput("[ERROR]: " + (e.message ?: e.toString()) + "\n")
+                        onComplete(-1)
+                    }
+                }
             } finally {
                 try { session?.close() } catch (_: Exception) {}
                 if (isLongRunning) {
+                    if (isExplicitStopRequested.get() || isExplicitDetachRequested.get()) {
+                        stopAppPortForward()
+                        isProcessRunning = false
+                        runningCommand = null
+                        remoteProcessPid = null
+                        activeSession = null
+                        activeCommand = null
+                        com.intellij.ide.ActivityTracker.getInstance().inc()
+                        try {
+                            project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).processStateChanged(false, null)
+                        } catch (_: Exception) {}
+                        activeProcessHandler?.finishProcess(0)
+                        activeProcessHandler = null
+                    }
+                }
+            }
+        }
+    }
+
+    fun checkAndAttachRemoteProcess(profile: ServerProfile = config.activeProfile) {
+        executor.submit {
+            val client = sshClient ?: return@submit
+            if (!client.isConnected) return@submit
+
+            try {
+                val rfRunDir = "\$HOME/.remote-flow/run"
+                val checkCmd = "if [ -f $rfRunDir/app.pid ] && kill -0 $(cat $rfRunDir/app.pid 2>/dev/null) 2>/dev/null; then cat $rfRunDir/app.pid; else echo 'NONE'; fi"
+                val session = client.startSession()
+                val exec = session.exec(checkCmd)
+                val out = BufferedReader(InputStreamReader(exec.inputStream, StandardCharsets.UTF_8)).use { it.readText() }.trim()
+                exec.join(5, TimeUnit.SECONDS)
+                session.close()
+
+                if (out.isNotBlank() && out != "NONE" && out.all { it.isDigit() }) {
+                    val pid = out.toLongOrNull()
+                    remoteProcessPid = pid
+                    isProcessRunning = true
+                    if (runningCommand.isNullOrBlank()) {
+                        runningCommand = "Active Server Process (PID $pid)"
+                    }
+                    com.intellij.ide.ActivityTracker.getInstance().inc()
+                    try {
+                        project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).processStateChanged(true, runningCommand)
+                    } catch (_: Exception) {}
+
+                    activeAppPort?.let { port ->
+                        forwardAppPort(port)
+                    }
+
+                    val reattachMsg = "\n[REMOTE FLOW] ✅ Connection restored! Remote application (PID $pid) is running smoothly.\n" +
+                            "[REMOTE FLOW] 🔀 Resuming live log streaming...\n"
+                    logService.log(reattachMsg, LogCategory.RUN, profile.name)
+                    activeProcessHandler?.printSystem(reattachMsg)
+
+                    attachLiveLogFollower(pid)
+                } else if (isProcessRunning && !isExplicitStopRequested.get() && !isExplicitDetachRequested.get()) {
+                    val readExitCmd = "cat $rfRunDir/app.exit 2>/dev/null || echo '0'"
+                    val exitSession = client.startSession()
+                    val exitExec = exitSession.exec(readExitCmd)
+                    val exitCodeStr = BufferedReader(InputStreamReader(exitExec.inputStream, StandardCharsets.UTF_8)).use { it.readText() }.trim()
+                    exitExec.join(4, TimeUnit.SECONDS)
+                    exitSession.close()
+
+                    val code = exitCodeStr.toIntOrNull() ?: 0
+                    val finishMsg = "\n[REMOTE FLOW FINISHED] Remote process completed while disconnected (Exit code: $code)\n"
+                    logService.log(finishMsg, LogCategory.RUN, profile.name)
+                    activeProcessHandler?.printSystem(finishMsg)
+                    activeProcessHandler?.finishProcess(code)
+                    activeProcessHandler = null
                     stopAppPortForward()
                     isProcessRunning = false
                     runningCommand = null
-                    activeSession = null
-                    activeCommand = null
+                    remoteProcessPid = null
                     com.intellij.ide.ActivityTracker.getInstance().inc()
                     try {
                         project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).processStateChanged(false, null)
                     } catch (_: Exception) {}
+                }
+            } catch (e: Exception) {
+                logService.log("[RE-ATTACH CHECK] ${e.message}", LogCategory.RUN, profile.name)
+            }
+        }
+    }
+
+    private fun attachLiveLogFollower(pid: Long?) {
+        executor.submit {
+            val client = sshClient ?: return@submit
+            if (!client.isConnected || !isProcessRunning) return@submit
+
+            var session: net.schmizz.sshj.connection.channel.direct.Session? = null
+            try {
+                val rfRunDir = "\$HOME/.remote-flow/run"
+                val pidClause = if (pid != null) "--pid=$pid" else "--pid=$(cat $rfRunDir/app.pid 2>/dev/null)"
+                val tailCmd = "tail -n 100 -f $rfRunDir/app.log $pidClause 2>/dev/null || tail -n 100 -f $rfRunDir/app.log"
+
+                session = client.startSession()
+                session.allocateDefaultPTY()
+                val cmd = session.exec(tailCmd)
+                activeSession = session
+                activeCommand = cmd
+
+                BufferedReader(InputStreamReader(cmd.inputStream, StandardCharsets.UTF_8)).use { reader ->
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        val raw = line ?: ""
+                        val cleaned = cleanProgressRemnants(raw)
+                        if (cleaned.isNotBlank() && cleanAnsiText(cleaned).trim().isNotBlank()) {
+                            activeProcessHandler?.printOutput(cleaned + "\n")
+                            logService.log(cleaned, LogCategory.RUN, config.activeProfile.name)
+                        }
+                    }
+                }
+
+                cmd.join()
+                if (!isExplicitStopRequested.get() && !isExplicitDetachRequested.get()) {
+                    stopAppPortForward()
+                    isProcessRunning = false
+                    runningCommand = null
+                    remoteProcessPid = null
                     activeProcessHandler?.finishProcess(0)
                     activeProcessHandler = null
+                    com.intellij.ide.ActivityTracker.getInstance().inc()
+                    try {
+                        project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).processStateChanged(false, null)
+                    } catch (_: Exception) {}
                 }
+            } catch (_: Exception) {
+                if (!isExplicitStopRequested.get() && !isExplicitDetachRequested.get() && isProcessRunning) {
+                    triggerAutoReconnect()
+                }
+            } finally {
+                try { session?.close() } catch (_: Exception) {}
             }
         }
     }
@@ -880,6 +1075,7 @@ class RemoteConnectionManager(private val project: Project) {
         onOutput: (String) -> Unit = {},
         onComplete: () -> Unit = {}
     ) {
+        isExplicitStopRequested.set(true)
         executor.submit {
             try {
                 // 1. Send Ctrl+C (ETX = 3) to the active command's output stream
@@ -897,11 +1093,25 @@ class RemoteConnectionManager(private val project: Project) {
             activeSession = null
             activeCommand = null
 
-            // 2. Kill remaining processes on the remote host (bootRun, java, gradle)
+            // 2. Kill remaining processes on the remote host (by recorded PID and process name)
             val client = sshClient
             if (client != null && client.isConnected) {
                 try {
-                    val stopCmd = "pkill -f bootRun 2>/dev/null; pkill -f 'java.*jar' 2>/dev/null; pkill -f 'org.gradle.launcher.daemon' 2>/dev/null; true"
+                    val stopCmd = """
+RF_DIR="${'$'}HOME/.remote-flow/run"
+if [ -f "${'$'}RF_DIR/app.pid" ]; then
+    PID=${'$'}(cat "${'$'}RF_DIR/app.pid" 2>/dev/null)
+    if [ -n "${'$'}PID" ]; then
+        pkill -TERM -P "${'$'}PID" 2>/dev/null
+        kill -TERM -- -"${'$'}PID" 2>/dev/null || kill -TERM "${'$'}PID" 2>/dev/null
+        sleep 0.5
+        pkill -9 -P "${'$'}PID" 2>/dev/null
+        kill -9 -- -"${'$'}PID" 2>/dev/null || kill -9 "${'$'}PID" 2>/dev/null
+    fi
+    rm -f "${'$'}RF_DIR/app.pid"
+fi
+pkill -f bootRun 2>/dev/null; pkill -f 'java.*jar' 2>/dev/null; pkill -f 'org.gradle.launcher.daemon' 2>/dev/null; true
+""".trimIndent()
                     val session = client.startSession()
                     val killCommand = session.exec(stopCmd)
                     killCommand.join(4, TimeUnit.SECONDS)
@@ -914,6 +1124,7 @@ class RemoteConnectionManager(private val project: Project) {
             stopAppPortForward()
             isProcessRunning = false
             runningCommand = null
+            remoteProcessPid = null
             com.intellij.ide.ActivityTracker.getInstance().inc()
             try {
                 project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).processStateChanged(false, null)
@@ -921,6 +1132,48 @@ class RemoteConnectionManager(private val project: Project) {
             activeProcessHandler?.finishProcess(130)
             activeProcessHandler = null
             onComplete()
+        }
+    }
+
+    fun stopRemoteProcessSync(timeoutSeconds: Long = 5) {
+        val latch = CountDownLatch(1)
+        stopRemoteProcess(
+            profile = config.activeProfile,
+            onOutput = {},
+            onComplete = { latch.countDown() }
+        )
+        try {
+            latch.await(timeoutSeconds, TimeUnit.SECONDS)
+        } catch (_: InterruptedException) {}
+    }
+
+    fun detachRemoteProcess() {
+        isExplicitDetachRequested.set(true)
+        executor.submit {
+            try {
+                try { activeSession?.close() } catch (_: Exception) {}
+                activeSession = null
+                activeCommand = null
+
+                stopAppPortForward()
+                isProcessRunning = false
+                runningCommand = null
+
+                com.intellij.ide.ActivityTracker.getInstance().inc()
+                try {
+                    project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).processStateChanged(false, null)
+                } catch (_: Exception) {}
+
+                val detachMsg = "[REMOTE FLOW] Detached from remote process. It remains running safely in background on server ${config.activeProfile.name}.\n"
+                logService.log(detachMsg, LogCategory.RUN, config.activeProfile.name)
+                activeProcessHandler?.printSystem(detachMsg)
+                activeProcessHandler?.let { handler ->
+                    handler.markDetached()
+                }
+                activeProcessHandler = null
+            } catch (e: Exception) {
+                logService.log("[DETACH ERROR] ${e.message}", LogCategory.RUN, config.activeProfile.name, isError = true)
+            }
         }
     }
 
@@ -960,6 +1213,61 @@ class RemoteConnectionManager(private val project: Project) {
         }
     }
 
+    /**
+     * Lists running or all docker containers on the active remote server.
+     */
+    fun listDockerContainers(onResult: (List<DockerContainer>) -> Unit) {
+        if (!isConnected) {
+            onResult(emptyList())
+            return
+        }
+        executeRemoteCommand("docker ps -a --format \"{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}\" 2>/dev/null || true") { out, _ ->
+            val list = mutableListOf<DockerContainer>()
+            out.lines().forEach { rawLine ->
+                val line = rawLine.trim()
+                if (line.isNotBlank()) {
+                    val parts = line.split('\t')
+                    if (parts.size >= 4) {
+                        list.add(
+                            DockerContainer(
+                                id = parts[0].trim(),
+                                names = parts[1].trim(),
+                                image = parts[2].trim(),
+                                status = parts[3].trim(),
+                                ports = if (parts.size > 4) parts[4].trim() else ""
+                            )
+                        )
+                    }
+                }
+            }
+            onResult(list)
+        }
+    }
+
+    fun restartDockerContainer(idOrName: String, onComplete: (Boolean, String) -> Unit) {
+        executeRemoteCommand("docker restart \"$idOrName\"") { out, code ->
+            onComplete(code == 0, out.trim())
+        }
+    }
+
+    fun stopDockerContainer(idOrName: String, onComplete: (Boolean, String) -> Unit) {
+        executeRemoteCommand("docker stop \"$idOrName\"") { out, code ->
+            onComplete(code == 0, out.trim())
+        }
+    }
+
+    fun startDockerContainer(idOrName: String, onComplete: (Boolean, String) -> Unit) {
+        executeRemoteCommand("docker start \"$idOrName\"") { out, code ->
+            onComplete(code == 0, out.trim())
+        }
+    }
+
+    fun getDockerContainerLogs(idOrName: String, lines: Int = 100, onResult: (String) -> Unit) {
+        executeRemoteCommand("docker logs --tail $lines \"$idOrName\" 2>&1 || true") { out, _ ->
+            onResult(out)
+        }
+    }
+
     fun notifyUser(title: String, message: String, type: NotificationType = NotificationType.INFORMATION) {
         try {
             val notification = Notification("Remote Flow", title, message, type)
@@ -967,7 +1275,7 @@ class RemoteConnectionManager(private val project: Project) {
         } catch (_: Exception) {}
     }
 
-    fun disconnect() {
+    fun disconnect(cleanProcess: Boolean = true) {
         heartbeatTask?.cancel(true)
         heartbeatTask = null
 
@@ -995,9 +1303,10 @@ class RemoteConnectionManager(private val project: Project) {
         sshClient = null
         stopAppPortForward()
 
-        if (isProcessRunning) {
+        if (cleanProcess && isProcessRunning) {
             isProcessRunning = false
             runningCommand = null
+            remoteProcessPid = null
             activeSession = null
             activeCommand = null
             com.intellij.ide.ActivityTracker.getInstance().inc()

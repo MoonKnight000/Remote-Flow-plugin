@@ -82,6 +82,27 @@ Traditional remote development solutions (such as JetBrains Gateway or headless 
 - **Colorized ANSI Console**: Dedicated "Remote Flow Log" tool window at the bottom of the IDE with real-time log streaming, ANSI color support, search filtering, log level categories (`ALL`, `RUN`, `SYNC`, `SSH`, `SYSTEM`), pause, and log export.
 - **Integrated SSH Terminal**: Open interactive SSH terminal sessions to the active server directly inside IntelliJ with a single click.
 
+### 13. Universal Cross-IDE & Multi-Stack Auto-Detection
+- **All JetBrains IDEs Supported**: Seamlessly compatible with IntelliJ IDEA, PyCharm, WebStorm, GoLand, PhpStorm, CLion, RustRover, and Rider.
+- **Auto-Detect Technology Stacks**: Automatically recognizes Node.js (`package.json`), Python (`pyproject.toml` / `requirements.txt`), Go (`go.mod`), Rust (`Cargo.toml`), PHP (`composer.json`), Maven (`pom.xml`), and Gradle (`build.gradle`), pre-filling optimal run, debug, test, and build commands.
+
+### 14. 1-Click SSH Config Import & Jump Host (ProxyJump)
+- **Import from `~/.ssh/config`**: Automatically discovers your existing OpenSSH hosts, users, ports, and private keys.
+- **SSH Bastion / Jump Host**: Connect seamlessly to servers in private corporate VPCs through an SSH Jump Host / Bastion proxy.
+
+### 15. Bidirectional Sync & Sub-Second Git-Aware Sync
+- **Pull from Remote**: Download database migrations, generated files, or remote changes back into your local project with one click.
+- **Git-Aware Diff Sync**: Sync only modified and untracked git files in milliseconds without scanning the entire workspace.
+
+### 16. Remote Docker & Docker Compose Explorer
+- **Container Explorer**: Inspect running containers, images, statuses, and port mappings in the dedicated Docker tab.
+- **Lifecycle & Logs**: Start, stop, restart containers, and view live container logs directly inside the IDE.
+- **1-Click Container Port Tunnel**: Map container internal ports directly to `localhost` in one click.
+
+### 17. AI Coding Agent Bridge & Model Context Protocol (MCP)
+- **Native AI CLI (`rf`)**: Run remote tests, builds, and commands from terminal tools (`.\rf.cmd test`, `.\rf.cmd pull`, `.\rf.cmd docker`, `.\rf.cmd diagnostics`).
+- **Model Context Protocol (MCP)**: Connect AI coding assistants (Cursor, Claude Code, Antigravity, Windsurf) to Remote Flow via `/api/mcp` for intelligent autonomous execution with structured compiler error feedback.
+
 ---
 
 ## ⌨️ Default Keyboard Shortcuts

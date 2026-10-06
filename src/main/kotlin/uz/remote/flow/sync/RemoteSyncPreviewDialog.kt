@@ -14,6 +14,9 @@ import uz.remote.flow.ssh.ServerProfile
 import java.awt.*
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
+import com.intellij.openapi.vfs.LocalFileSystem
 import javax.swing.*
 import javax.swing.table.AbstractTableModel
 import javax.swing.table.DefaultTableCellRenderer
@@ -31,7 +34,7 @@ data class SyncDiffItem(
 )
 
 class RemoteSyncPreviewDialog(
-    project: Project,
+    private val project: Project,
     private val profile: ServerProfile,
     private val allItems: List<SyncDiffItem>,
     private val onConfirmSync: () -> Unit
@@ -153,12 +156,34 @@ class RemoteSyncPreviewDialog(
             }
         }
 
+        diffTable.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                if (e.clickCount == 2) {
+                    val row = diffTable.selectedRow
+                    if (row >= 0 && row < filteredItems.size) {
+                        val item = filteredItems[row]
+                        val basePath = project.basePath ?: return
+                        val localPath = "$basePath/${item.relativePath}".replace('\\', '/')
+                        val vFile = LocalFileSystem.getInstance().findFileByPath(localPath)
+                        if (vFile != null && !vFile.isDirectory) {
+                            uz.remote.flow.diff.RemoteDiffManager.getInstance(project).compareFileWithRemote(vFile, profile)
+                        }
+                    }
+                }
+            }
+        })
+
         val scrollPane = JBScrollPane(diffTable)
         scrollPane.border = BorderFactory.createLineBorder(JBColor(Color(229, 231, 235), Color(60, 63, 65)))
+
+        val hintLabel = JBLabel("💡 Tip: Double-click any file to open side-by-side Diff viewer against remote server.")
+        hintLabel.foreground = JBColor.GRAY
+        hintLabel.font = hintLabel.font.deriveFont(11.5f)
 
         val centerPanel = JPanel(BorderLayout(0, 6))
         centerPanel.add(toolbar, BorderLayout.NORTH)
         centerPanel.add(scrollPane, BorderLayout.CENTER)
+        centerPanel.add(hintLabel, BorderLayout.SOUTH)
 
         root.add(centerPanel, BorderLayout.CENTER)
         return root
