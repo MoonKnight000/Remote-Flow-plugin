@@ -719,8 +719,11 @@ class RemoteConnectionManager(private val project: Project) {
                         BufferedReader(InputStreamReader(command.errorStream, java.nio.charset.StandardCharsets.UTF_8)).use { errReader ->
                             var errLine: String?
                             while (errReader.readLine().also { errLine = it } != null) {
-                                val text = errLine ?: ""
-                                onOutput(text + "\n")
+                                val raw = errLine ?: ""
+                                val cleaned = cleanProgressRemnants(raw)
+                                if (cleaned.isNotBlank() && cleanAnsiText(cleaned).trim().isNotBlank()) {
+                                    onOutput(cleaned + "\n")
+                                }
                             }
                         }
                     } catch (_: Exception) {}
@@ -730,8 +733,11 @@ class RemoteConnectionManager(private val project: Project) {
                 BufferedReader(InputStreamReader(command.inputStream, java.nio.charset.StandardCharsets.UTF_8)).use { reader ->
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
-                        val text = line ?: ""
-                        onOutput(text + "\n")
+                        val raw = line ?: ""
+                        val cleaned = cleanProgressRemnants(raw)
+                        if (cleaned.isNotBlank() && cleanAnsiText(cleaned).trim().isNotBlank()) {
+                            onOutput(cleaned + "\n")
+                        }
                     }
                 }
 
@@ -795,12 +801,9 @@ class RemoteConnectionManager(private val project: Project) {
                         var line: String?
                         while (reader.readLine().also { line = it } != null) {
                             val raw = line ?: ""
-                            val parts = raw.split('\r')
-                            for (part in parts) {
-                                val cleaned = cleanProgressRemnants(part)
-                                if (cleaned.isNotBlank()) {
-                                    onOutput(cleaned + "\n")
-                                }
+                            val cleaned = cleanProgressRemnants(raw)
+                            if (cleaned.isNotBlank() && cleanAnsiText(cleaned).trim().isNotBlank()) {
+                                onOutput(cleaned + "\n")
                             }
                         }
                     }
@@ -821,9 +824,10 @@ class RemoteConnectionManager(private val project: Project) {
                             BufferedReader(InputStreamReader(command.errorStream, java.nio.charset.StandardCharsets.UTF_8)).use { errReader ->
                                 var errLine: String?
                                 while (errReader.readLine().also { errLine = it } != null) {
-                                    val text = errLine?.trim() ?: ""
-                                    if (text.isNotBlank()) {
-                                        onOutput(text + "\n")
+                                    val raw = errLine ?: ""
+                                    val cleaned = cleanProgressRemnants(raw)
+                                    if (cleaned.isNotBlank() && cleanAnsiText(cleaned).trim().isNotBlank()) {
+                                        onOutput(cleaned + "\n")
                                     }
                                 }
                             }
@@ -835,12 +839,9 @@ class RemoteConnectionManager(private val project: Project) {
                         var line: String?
                         while (reader.readLine().also { line = it } != null) {
                             val raw = line ?: ""
-                            val parts = raw.split('\r')
-                            for (part in parts) {
-                                val cleaned = cleanProgressRemnants(part)
-                                if (cleaned.isNotBlank()) {
-                                    onOutput(cleaned + "\n")
-                                }
+                            val cleaned = cleanProgressRemnants(raw)
+                            if (cleaned.isNotBlank() && cleanAnsiText(cleaned).trim().isNotBlank()) {
+                                onOutput(cleaned + "\n")
                             }
                         }
                     }

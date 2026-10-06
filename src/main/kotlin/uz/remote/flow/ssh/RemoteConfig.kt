@@ -223,19 +223,52 @@ fun cleanAnsiText(text: String): String {
 fun buildRemoteExecutionCommand(rawCmd: String, javaHome: String): String {
     val javaPrefix = resolveJavaEnvPrefix(javaHome)
     var cmd = rawCmd.trim()
-    // If executing Gradle, ensure rich console for colorized ANSI output
+    // For Gradle, use --console=plain to prevent curses/interactive progress bar animations
+    // from corrupting the line-based IDE log console and remote stream.
+    // Spring Boot and other tools maintain rich ANSI colors via SPRING_OUTPUT_ANSI_ENABLED=ALWAYS and FORCE_COLOR=1.
     if ((cmd.contains("gradlew") || cmd.contains("gradle")) && !cmd.contains("--console")) {
-        cmd = "$cmd --console=rich"
+        cmd = "$cmd --console=plain"
     }
-    return "${javaPrefix}export GRADLE_OPTS=\"-Dorg.gradle.console=rich \${GRADLE_OPTS:-}\"; export TERM=xterm-256color; export FORCE_COLOR=1; export SPRING_OUTPUT_ANSI_ENABLED=ALWAYS; sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $cmd"
+    return "${javaPrefix}export GRADLE_OPTS=\"-Dorg.gradle.console=plain \${GRADLE_OPTS:-}\"; export TERM=xterm-256color; export FORCE_COLOR=1; export SPRING_OUTPUT_ANSI_ENABLED=ALWAYS; sed -i 's/\\r$//' ./gradlew ./mvnw *.sh 2>/dev/null || true; chmod +x ./gradlew ./mvnw *.sh 2>/dev/null || true; $cmd"
 }
 
 fun cleanProgressRemnants(text: String): String {
     if (text.isEmpty()) return text
-    // Strip Gradle/Maven interactive progress bars, e.g. │█████████████▎·│ 88% EXECUTING [14s]> :bootRun
-    var s = text.replace(Regex("""[│|]?[█\s▎·#=\-/\\<]*\d+%\s*(EXECUTING|WAITING|CONFIGURING|BUILDING|RUNNING)(\s*\[[^\]\n]*\])?(>\s*:[a-zA-Z0-9_\-:]+)?"""), "")
+
+    // 1. If ANSI line-erase code (\u001B[2K) is present, only the text after the last clear line was visible on terminal
+    var s = if (text.contains("\u001B[2K")) {
+        text.substringAfterLast("\u001B[2K")
+    } else {
+        text
+    }
+
+    // 2. If carriage returns (\r) are present within the line, take the last non-blank segment
+    if (s.contains('\r')) {
+        s = s.split('\r').lastOrNull { it.isNotBlank() } ?: ""
+    }
+
+    // 3. Strip Gradle/Maven interactive progress bar boxes:
+    // e.g. | =======> :bootRun ======= | or [=======> :bootRun] or │█████████████▎·│
+    // with or without embedded ANSI escape sequences, followed by optional dots/spaces
+    val boxRegex = Regex("""(?:\u001B\[[0-9;?]*[ -/]*[@-~])*[│|\[](?:[^│|\]\r\n]|(?:\u001B\[[0-9;?]*[ -/]*[@-~]))*(?:[█▎·#=<>]{2,}|:[a-zA-Z0-9_\-:]+\s*[█▎·#=<>]+|[█▎·#=<>]+:[a-zA-Z0-9_\-:]+)(?:[^│|\]\r\n]|(?:\u001B\[[0-9;?]*[ -/]*[@-~]))*[│|\]](?:\u001B\[[0-9;?]*[ -/]*[@-~])*[ ·\t]*""")
+    s = s.replace(boxRegex, "")
+
+    // 4. Strip Gradle indeterminate or percentage progress bars:
+    // e.g. <==========---> 80% EXECUTING [14s] > :bootRun
+    s = s.replace(Regex("""[<\[]?[█\s▎·#=\-/\\<>]*\d+%\s*(?:EXECUTING|WAITING|CONFIGURING|BUILDING|RUNNING|INITIALIZING|RESOLVING)(?:\s*\[[^\]\n]*\])?(?:\s*>\s*:[a-zA-Z0-9_\-:]+)?[ ·\t]*"""), "")
+
+    // 5. Strip any leftover progress bar border chunks
     s = s.replace(Regex("""[│|][█\s▎·#=\-/\\<]+[│|]"""), "")
-    return s.trim()
+
+    // 6. Strip interactive task indicator bar e.g. > :bootRun [=====>    ]
+    s = s.replace(Regex("""(?:^|\s)>\s*:[a-zA-Z0-9_\-:]+\s*[<\[][█\s▎·#=\-/\\<>]+[>\]][ ·\t]*"""), "")
+
+    // 7. Strip leading middle dots or leftover separator dots before timestamps / content
+    s = s.replace(Regex("""^[·\s\t]+"""), "")
+    s = s.replace(Regex("""(?<=\s)·\s*"""), "")
+    s = s.replace(Regex("""[·\s]+(?=\d{4}-\d{2}-\d{2})"""), " ")
+
+    return s.trimEnd('\r', '\n')
 }
 
 data class RemoteConfig(
