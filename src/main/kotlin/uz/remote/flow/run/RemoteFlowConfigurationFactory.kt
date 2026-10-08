@@ -1,5 +1,7 @@
 package uz.remote.flow.run
 
+import com.intellij.execution.RunManagerEx
+import com.intellij.execution.RunnerAndConfigurationSettings
 import com.intellij.execution.configurations.ConfigurationFactory
 import com.intellij.execution.configurations.ConfigurationType
 import com.intellij.execution.configurations.RunConfiguration
@@ -18,5 +20,12 @@ class RemoteFlowConfigurationFactory(type: ConfigurationType) : ConfigurationFac
 
     override fun getOptionsClass(): Class<out RunConfigurationOptions> {
         return RemoteFlowRunConfigurationOptions::class.java
+    }
+
+    override fun configureDefaultSettings(settings: RunnerAndConfigurationSettings) {
+        super.configureDefaultSettings(settings)
+        try {
+            RunManagerEx.getInstanceEx(settings.configuration.project).setBeforeRunTasks(settings.configuration, emptyList())
+        } catch (_: Throwable) {}
     }
 }

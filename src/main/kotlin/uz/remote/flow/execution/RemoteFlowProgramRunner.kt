@@ -1,5 +1,6 @@
 package uz.remote.flow.execution
 
+import com.intellij.execution.ExecutionManager
 import com.intellij.execution.configurations.RunConfiguration
 import com.intellij.execution.configurations.RunProfile
 import com.intellij.execution.configurations.RunnerSettings
@@ -9,6 +10,8 @@ import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.runners.ProgramRunner
 import com.intellij.execution.runners.RunContentBuilder
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.fileEditor.FileDocumentManager
+import org.jetbrains.concurrency.resolvedPromise
 import uz.remote.flow.run.RemoteFlowRunConfiguration
 import uz.remote.flow.settings.RemoteFlowSettings
 
@@ -32,8 +35,6 @@ class RemoteFlowProgramRunner : ProgramRunner<RunnerSettings> {
         val project = (profile as? RunConfiguration)?.project ?: return false
         val settings = RemoteFlowSettings.getInstance(project)
         if (!settings.routeStandardRunToRemote) return false
-        val connMgr = uz.remote.flow.ssh.RemoteConnectionManager.getInstance(project)
-        if (!connMgr.isConnected) return false
         val p = settings.activeProfileOrNull ?: return false
         if (p.host.isBlank()) return false
 
@@ -126,25 +127,34 @@ class RemoteFlowProgramRunner : ProgramRunner<RunnerSettings> {
             }
         }
 
+        val project = environment.project
         val state = if (environment.runProfile is RemoteFlowRunConfiguration) {
             environment.state ?: RemoteFlowRunProfileState(environment, isDebug = false)
         } else {
             RemoteFlowRunProfileState(environment, isDebug = false)
         }
 
-        ApplicationManager.getApplication().invokeLater {
-            if (environment.project.isDisposed) return@invokeLater
-            val executionResult = state.execute(environment.executor, this) ?: return@invokeLater
-            val descriptor = RunContentBuilder(executionResult, environment).showRunContent(environment.contentToReuse)
+        FileDocumentManager.getInstance().saveAllDocuments()
+
+        ExecutionManager.getInstance(project).startRunProfile(environment) {
+            val executionResult = state.execute(environment.executor, this)
+            val descriptor = executionResult?.let {
+                RunContentBuilder(it, environment).showRunContent(environment.contentToReuse)
+            }
             if (descriptor != null) {
-                com.intellij.execution.ui.RunContentManager.getInstance(environment.project)
+                com.intellij.execution.ui.RunContentManager.getInstance(project)
                     .toFrontRunContent(environment.executor, descriptor)
             }
-            com.intellij.openapi.wm.ToolWindowManager.getInstance(environment.project)
-                .getToolWindow(com.intellij.openapi.wm.ToolWindowId.RUN)?.apply {
-                    show(null)
-                    activate(null)
+            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+                if (!project.isDisposed) {
+                    com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
+                        .getToolWindow(com.intellij.openapi.wm.ToolWindowId.RUN)?.apply {
+                            show(null)
+                            activate(null)
+                        }
                 }
+            }
+            resolvedPromise(descriptor)
         }
     }
 }

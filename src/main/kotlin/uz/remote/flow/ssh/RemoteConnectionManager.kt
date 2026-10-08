@@ -844,7 +844,7 @@ class RemoteConnectionManager(private val project: Project) {
                         "trap '' HUP PIPE",
                         "mkdir -p $rfRunDir",
                         "echo \$\$ > $rfRunDir/app.pid",
-                        if (workingDir.isNotBlank()) "cd \"$workingDir\" || exit 1" else "",
+                        if (workingDir.isNotBlank()) "cd \"$workingDir\" || { echo 1 > $rfRunDir/app.exit; rm -f $rfRunDir/app.pid; exit 1; }" else "",
                         cmd,
                         "EXIT_CODE=${'$'}?",
                         "echo ${'$'}EXIT_CODE > $rfRunDir/app.exit",
@@ -860,7 +860,9 @@ class RemoteConnectionManager(private val project: Project) {
                         "chmod +x $rfRunDir/app.sh && " +
                         "nohup $rfRunDir/app.sh > $rfRunDir/app.log 2>&1 & " +
                         "sleep 0.3 && " +
-                        "tail -n +1 -f $rfRunDir/app.log --pid=$(cat $rfRunDir/app.pid 2>/dev/null) 2>/dev/null || tail -n +1 -f $rfRunDir/app.log"
+                        "(tail -n +1 -f $rfRunDir/app.log --pid=$(cat $rfRunDir/app.pid 2>/dev/null) 2>/dev/null || tail -n +1 -f $rfRunDir/app.log); " +
+                        "EXIT_CODE=$(cat $rfRunDir/app.exit 2>/dev/null); " +
+                        "exit ${'$'}{EXIT_CODE:-0}"
                     )
 
                     session = client.startSession()
@@ -899,8 +901,31 @@ class RemoteConnectionManager(private val project: Project) {
                     } else if (isExplicitDetachRequested.get()) {
                         return@submit
                     } else if (normalEof) {
-                        val exitStatus = command.exitStatus ?: 0
-                        onComplete(exitStatus)
+                        val realExitCode = try {
+                            val exitSession = client.startSession()
+                            val exitExec = exitSession.exec("cat $rfRunDir/app.exit 2>/dev/null")
+                            val codeStr = BufferedReader(InputStreamReader(exitExec.inputStream, StandardCharsets.UTF_8)).use { it.readText() }.trim()
+                            exitExec.join(2, TimeUnit.SECONDS)
+                            exitSession.close()
+                            codeStr.toIntOrNull() ?: (command.exitStatus ?: 0)
+                        } catch (_: Exception) {
+                            command.exitStatus ?: 0
+                        }
+
+                        isProcessRunning = false
+                        runningCommand = null
+                        remoteProcessPid = null
+                        activeSession = null
+                        activeCommand = null
+                        stopAppPortForward()
+                        com.intellij.ide.ActivityTracker.getInstance().inc()
+                        try {
+                            project.messageBus.syncPublisher(RemoteConnectionListener.TOPIC).processStateChanged(false, null)
+                        } catch (_: Exception) {}
+                        activeProcessHandler = null
+
+                        onComplete(realExitCode)
+                        return@submit
                     } else {
                         onOutput("\n[REMOTE FLOW] ⚠️ Connection interrupted (Wi-Fi or network switch).\n[REMOTE FLOW] ⚡ The application continues running safely on the server.\n[REMOTE FLOW] 🔄 Auto-reconnecting to server...\n")
                         logService.log("[SSH INTERRUPTED] Network drop detected. Process kept alive on server. Reconnecting...", LogCategory.RUN, config.activeProfile.name)

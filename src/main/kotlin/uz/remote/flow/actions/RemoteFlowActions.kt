@@ -243,9 +243,10 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
                 runManager.allSettings.find { it.configuration == rc }
             } ?: runManager.selectedConfiguration?.takeIf {
                 it.configuration is uz.remote.flow.run.RemoteFlowRunConfiguration ||
-                (settings.routeStandardRunToRemote && connMgr.isConnected && uz.remote.flow.execution.RemoteFlowProgramRunner.isSupportedStandardApplication(it.configuration))
+                (settings.routeStandardRunToRemote && uz.remote.flow.execution.RemoteFlowProgramRunner.isSupportedStandardApplication(it.configuration))
             } ?: runManager.getConfigurationSettingsList(type).firstOrNull()
 
+            val runManagerEx = com.intellij.execution.RunManagerEx.getInstanceEx(project)
             if (configSettings == null) {
                 uz.remote.flow.run.RemoteFlowStartupActivity.ensureDefaultRunConfiguration(project)
                 configSettings = runManager.getConfigurationSettingsList(type).firstOrNull() ?: run {
@@ -253,8 +254,13 @@ class RemoteFlowRunAction : AnAction("Remote Run", "Sync and run application on 
                     val newSettings = runManager.createConfiguration("Remote Flow", factory)
                     runManager.addConfiguration(newSettings)
                     runManager.selectedConfiguration = newSettings
+                    runManagerEx.setBeforeRunTasks(newSettings.configuration, emptyList())
                     newSettings
                 }
+            }
+
+            if (configSettings.configuration is uz.remote.flow.run.RemoteFlowRunConfiguration) {
+                runManagerEx.setBeforeRunTasks(configSettings.configuration, emptyList())
             }
 
             uz.remote.flow.logging.RemoteFlowLogService.getInstance(project).showLogWindow()
@@ -310,9 +316,10 @@ class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in 
                 runManager.allSettings.find { it.configuration == rc }
             } ?: runManager.selectedConfiguration?.takeIf {
                 it.configuration is uz.remote.flow.run.RemoteFlowRunConfiguration ||
-                (settings.routeStandardRunToRemote && connMgr.isConnected && uz.remote.flow.execution.RemoteFlowProgramRunner.isSupportedStandardApplication(it.configuration))
+                (settings.routeStandardRunToRemote && uz.remote.flow.execution.RemoteFlowProgramRunner.isSupportedStandardApplication(it.configuration))
             } ?: runManager.getConfigurationSettingsList(type).firstOrNull()
 
+            val runManagerEx = com.intellij.execution.RunManagerEx.getInstanceEx(project)
             if (configSettings == null) {
                 uz.remote.flow.run.RemoteFlowStartupActivity.ensureDefaultRunConfiguration(project)
                 configSettings = runManager.getConfigurationSettingsList(type).firstOrNull() ?: run {
@@ -320,8 +327,13 @@ class RemoteFlowDebugAction : AnAction("Remote Debug", "Run on remote server in 
                     val newSettings = runManager.createConfiguration("Remote Flow", factory)
                     runManager.addConfiguration(newSettings)
                     runManager.selectedConfiguration = newSettings
+                    runManagerEx.setBeforeRunTasks(newSettings.configuration, emptyList())
                     newSettings
                 }
+            }
+
+            if (configSettings.configuration is uz.remote.flow.run.RemoteFlowRunConfiguration) {
+                runManagerEx.setBeforeRunTasks(configSettings.configuration, emptyList())
             }
 
             uz.remote.flow.logging.RemoteFlowLogService.getInstance(project).showLogWindow()

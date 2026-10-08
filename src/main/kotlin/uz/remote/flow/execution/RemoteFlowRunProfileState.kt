@@ -77,17 +77,18 @@ class RemoteFlowRunProfileState(
             return null
         }
 
+        val stackPreset = uz.remote.flow.stack.ProjectStackDetector.detect(java.io.File(project.basePath ?: ""))
         val rawCmd = if (isDebug) {
             if (runConfig != null && runConfig.debugCommand.isNotBlank()) {
                 runConfig.debugCommand.trim()
             } else {
-                p.debugCommand.ifBlank { "./gradlew bootRun --debug-jvm" }
+                p.debugCommand.ifBlank { stackPreset.debugCommand.ifBlank { "./gradlew bootRun --debug-jvm" } }
             }
         } else {
             if (runConfig != null && runConfig.runCommand.isNotBlank()) {
                 runConfig.runCommand.trim()
             } else {
-                p.runCommand.ifBlank { "./gradlew bootRun" }
+                p.runCommand.ifBlank { stackPreset.runCommand.ifBlank { "./gradlew bootRun" } }
             }
         }
 
@@ -103,7 +104,6 @@ class RemoteFlowRunProfileState(
         val processHandler = RemoteFlowProcessHandler(project, p, rawCmd)
         console.attachToProcess(processHandler)
 
-        connMgr.activeProcessHandler = processHandler
         processHandler.startNotify()
 
         // Attach Remote Performance Profiler Panel (Live CPU/Heap graphs & recording)
@@ -302,9 +302,11 @@ class RemoteFlowRunProfileState(
             if (connMgr.isProcessRunning) {
                 processHandler.printSystem("[REMOTE FLOW] Restarting application: stopping existing instance...\n")
                 connMgr.stopRemoteProcess(p, onOutput = { processHandler.printOutput(it) }) {
+                    connMgr.activeProcessHandler = processHandler
                     doRun()
                 }
             } else {
+                connMgr.activeProcessHandler = processHandler
                 doRun()
             }
         }

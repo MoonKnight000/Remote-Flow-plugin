@@ -23,6 +23,7 @@ class RemoteFlowStartupActivity : ProjectActivity {
             val runManager = RunManager.getInstance(project)
             val type = RemoteFlowConfigurationType.getInstance()
             val existing = runManager.getConfigurationSettingsList(type)
+            val runManagerEx = com.intellij.execution.RunManagerEx.getInstanceEx(project)
             if (existing.isEmpty()) {
                 val factory = type.configurationFactories.firstOrNull() ?: return
                 val runnerAndConfigurationSettings = runManager.createConfiguration("Remote Flow", factory)
@@ -33,6 +34,9 @@ class RemoteFlowStartupActivity : ProjectActivity {
                     config.forwardPorts = true
                 }
                 runManager.addConfiguration(runnerAndConfigurationSettings)
+                runManagerEx.setBeforeRunTasks(runnerAndConfigurationSettings.configuration, emptyList())
+            } else {
+                existing.forEach { runManagerEx.setBeforeRunTasks(it.configuration, emptyList()) }
             }
         }
     }
