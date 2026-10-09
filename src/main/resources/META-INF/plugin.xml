@@ -80,6 +80,8 @@
 
         <postStartupActivity implementation="uz.remote.flow.run.RemoteFlowStartupActivity"/>
 
+        <consoleFilterProvider implementation="uz.remote.flow.execution.RemoteFlowConsoleFilterProvider" order="first"/>
+
         <notificationGroup id="Remote Flow" displayType="BALLOON" isLogByDefault="true"/>
     </extensions>
 

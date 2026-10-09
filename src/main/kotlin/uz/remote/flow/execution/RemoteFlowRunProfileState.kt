@@ -100,7 +100,9 @@ class RemoteFlowRunProfileState(
         val shouldSync = runConfig?.autoSync ?: true
         val shouldForward = runConfig?.forwardPorts ?: true
 
-        val console = TextConsoleBuilderFactory.getInstance().createBuilder(project).console
+        val console = TextConsoleBuilderFactory.getInstance().createBuilder(project).apply {
+            addFilter(RemoteFlowConsoleFilter(project))
+        }.console
         val processHandler = RemoteFlowProcessHandler(project, p, rawCmd)
         console.attachToProcess(processHandler)
 

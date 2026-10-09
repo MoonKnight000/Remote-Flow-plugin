@@ -63,7 +63,9 @@ class RemoteFlowMainPanel(private val project: Project) : JPanel(BorderLayout(0,
     private val syncManager = FastSyncManager(project)
     private val statsManager = ServerStatsManager(project)
 
-    private val terminalConsoleView: ConsoleView = TextConsoleBuilderFactory.getInstance().createBuilder(project).console
+    private val terminalConsoleView: ConsoleView = TextConsoleBuilderFactory.getInstance().createBuilder(project).apply {
+        addFilter(uz.remote.flow.execution.RemoteFlowConsoleFilter(project))
+    }.console
 
     // Header Controls
     private val profileComboBox = JComboBox<ServerProfile>()

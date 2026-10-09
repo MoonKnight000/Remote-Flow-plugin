@@ -46,7 +46,8 @@ data class LogEntry(
 class RemoteFlowLogService(private val project: Project) {
 
     val consoleView: ConsoleView = TextConsoleBuilderFactory.getInstance().createBuilder(project).apply {
-        filters(com.intellij.execution.filters.UrlFilter())
+        addFilter(uz.remote.flow.execution.RemoteFlowConsoleFilter(project))
+        addFilter(com.intellij.execution.filters.UrlFilter())
     }.console.apply {
         allowHeavyFilters()
     }
